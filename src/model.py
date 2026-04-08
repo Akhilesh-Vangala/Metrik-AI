@@ -158,7 +158,6 @@ def train_site_model(
     val: pd.DataFrame,
     cfg: AppConfig,
 ) -> dict:
-    """Train a per-site LightGBM model. Used by the parallel training module."""
     site_train = train[train["site_id"] == site_id]
     site_val = val[val["site_id"] == site_id]
 

@@ -166,7 +166,6 @@ def build_features(df: pd.DataFrame, cfg: FeaturesConfig) -> pd.DataFrame:
 
 
 def build_features_naive(df: pd.DataFrame, cfg: FeaturesConfig) -> pd.DataFrame:
-    """Full row-by-row feature engineering — intentionally slow for benchmarking."""
     df = df.sort_values(["building_id", "meter", "timestamp"]).copy()
 
     hours, dows, months, weekends, holidays_list = [], [], [], [], []

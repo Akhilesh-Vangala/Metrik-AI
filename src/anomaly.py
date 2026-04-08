@@ -12,7 +12,6 @@ logger = logging.getLogger(__name__)
 
 
 def modified_zscore_naive(residuals: np.ndarray) -> np.ndarray:
-    """Pure Python loop — intentionally slow for benchmarking."""
     n = len(residuals)
     scores = np.empty(n, dtype=np.float64)
 
@@ -40,12 +39,32 @@ def modified_zscore_naive(residuals: np.ndarray) -> np.ndarray:
 
 
 def modified_zscore_vectorized(residuals: np.ndarray) -> np.ndarray:
-    """Fully vectorized NumPy implementation."""
     median_val = np.median(residuals)
     mad = np.median(np.abs(residuals - median_val))
     if mad == 0:
         mad = 1e-10
     return (0.6745 * (residuals - median_val) / mad).astype(np.float32)
+
+
+def _get_scorer():
+    try:
+        from src.numba_ops import modified_zscore_numba, warmup
+        warmup()
+        logger.info("Using Numba JIT for anomaly scoring")
+        return modified_zscore_numba
+    except Exception:
+        logger.info("Numba unavailable, falling back to NumPy vectorized scoring")
+        return modified_zscore_vectorized
+
+
+_scorer = None
+
+
+def _score_array(residuals: np.ndarray) -> np.ndarray:
+    global _scorer
+    if _scorer is None:
+        _scorer = _get_scorer()
+    return _scorer(residuals.astype(np.float64)).astype(np.float32)
 
 
 def detect_anomalies(
@@ -57,7 +76,7 @@ def detect_anomalies(
         cfg = AnomalyConfig()
 
     t0 = time.perf_counter()
-    logger.info("Running per-meter anomaly detection (method=%s, threshold=%.1f)", cfg.method, cfg.threshold)
+    logger.info("Per-meter anomaly detection (method=%s, threshold=%.1f)", cfg.method, cfg.threshold)
 
     df = df.copy()
 
@@ -65,11 +84,12 @@ def detect_anomalies(
         residuals = group[residual_col].values.astype(np.float64)
         if len(residuals) < 10:
             return pd.Series(np.zeros(len(residuals)), index=group.index, dtype=np.float32)
-        return pd.Series(modified_zscore_vectorized(residuals), index=group.index)
+        return pd.Series(_score_array(residuals), index=group.index)
 
-    df["anomaly_score"] = df.groupby(["building_id", "meter"], group_keys=False).apply(_score_group, include_groups=False)
+    df["anomaly_score"] = df.groupby(["building_id", "meter"], group_keys=False).apply(
+        _score_group, include_groups=False
+    )
     df["is_anomaly"] = (np.abs(df["anomaly_score"]) > cfg.threshold).astype(np.int8)
-
     df = _add_temporal_clusters(df)
 
     elapsed = time.perf_counter() - t0
@@ -85,7 +105,6 @@ def detect_anomalies_global(
     residual_col: str = "residual",
     threshold: float = 3.5,
 ) -> pd.DataFrame:
-    """Global scoring (for benchmarking speed — not for production use)."""
     df = df.copy()
     residuals = df[residual_col].values.astype(np.float32)
     df["anomaly_score"] = modified_zscore_vectorized(residuals)
@@ -94,7 +113,6 @@ def detect_anomalies_global(
 
 
 def _add_temporal_clusters(df: pd.DataFrame) -> pd.DataFrame:
-    """Tag consecutive anomalous hours — sustained anomalies are more concerning."""
     df = df.sort_values(["building_id", "meter", "timestamp"])
 
     def _cluster_streak(s: pd.Series) -> pd.Series:
@@ -102,7 +120,9 @@ def _add_temporal_clusters(df: pd.DataFrame) -> pd.DataFrame:
         group_id = shifted.cumsum()
         return s.groupby(group_id).transform("sum") * s
 
-    df["anomaly_streak"] = df.groupby(["building_id", "meter"])["is_anomaly"].transform(_cluster_streak).astype(np.int16)
+    df["anomaly_streak"] = df.groupby(
+        ["building_id", "meter"]
+    )["is_anomaly"].transform(_cluster_streak).astype(np.int16)
     return df
 
 

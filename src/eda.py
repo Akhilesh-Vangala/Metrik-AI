@@ -326,6 +326,92 @@ def plot_predictions_vs_actual(actual: np.ndarray, predicted: np.ndarray, output
     plt.close(fig)
 
 
+def plot_model_comparison(results: dict, output_dir: str | Path):
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    models = []
+    rmses = []
+    for key, label in [("baseline_mean_rmse", "Baseline\nMean"), ("baseline_lag24_rmse", "Baseline\nLag-24h"), ("lightgbm_rmse", "LightGBM")]:
+        if key in results:
+            models.append(label)
+            rmses.append(results[key])
+
+    if not models:
+        return
+
+    colors = ["#FF9800", "#FF5722", "#2196F3"][:len(models)]
+    fig, ax = plt.subplots(figsize=(6, 4))
+    bars = ax.bar(models, rmses, color=colors, width=0.5)
+    for bar, val in zip(bars, rmses):
+        ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + max(rmses) * 0.01,
+                f"{val:.1f}", ha="center", va="bottom", fontsize=10, fontweight="bold")
+    ax.set_ylabel("RMSE")
+    ax.set_title("Model Comparison")
+    plt.tight_layout()
+    fig.savefig(output_dir / "model_comparison.png", dpi=150)
+    plt.close(fig)
+
+
+def plot_benchmark_speedups(benchmarks_csv: str | Path, output_dir: str | Path):
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    benchmarks_csv = Path(benchmarks_csv)
+
+    if not benchmarks_csv.exists():
+        return
+
+    df = pd.read_csv(benchmarks_csv)
+    components = df["component"].unique()
+
+    fig, axes = plt.subplots(1, len(components), figsize=(5 * len(components), 4))
+    if len(components) == 1:
+        axes = [axes]
+
+    for ax, comp in zip(axes, components):
+        subset = df[df["component"] == comp]
+        methods = subset["method"].values
+        times = subset["time_seconds"].values
+        ax.barh(methods, times, color="#2196F3")
+        ax.set_xlabel("Time (seconds)")
+        ax.set_title(comp)
+        for i, (m, t) in enumerate(zip(methods, times)):
+            ax.text(t + max(times) * 0.02, i, f"{t:.3f}s", va="center", fontsize=8)
+
+    plt.suptitle("Optimization Benchmarks", fontsize=13)
+    plt.tight_layout()
+    fig.savefig(output_dir / "benchmark_speedups.png", dpi=150)
+    plt.close(fig)
+
+
+def plot_parallel_speedup(parallel_csv: str | Path, output_dir: str | Path):
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    parallel_csv = Path(parallel_csv)
+
+    if not parallel_csv.exists():
+        return
+
+    df = pd.read_csv(parallel_csv)
+    fig, axes = plt.subplots(1, 2, figsize=(10, 4))
+
+    axes[0].plot(df["n_workers"], df["time_seconds"], "o-", color="#2196F3", linewidth=2)
+    axes[0].set_xlabel("Workers")
+    axes[0].set_ylabel("Time (seconds)")
+    axes[0].set_title("Training Time vs Workers")
+
+    axes[1].plot(df["n_workers"], df["speedup"], "o-", color="#4CAF50", linewidth=2)
+    axes[1].plot(df["n_workers"], df["n_workers"], "--", color="#999", alpha=0.5, label="ideal")
+    axes[1].set_xlabel("Workers")
+    axes[1].set_ylabel("Speedup")
+    axes[1].set_title("Parallel Speedup")
+    axes[1].legend()
+
+    plt.tight_layout()
+    fig.savefig(output_dir / "parallel_speedup.png", dpi=150)
+    plt.close(fig)
+
+
 def plot_anomaly_distribution(val_df: pd.DataFrame, output_dir: str | Path):
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)

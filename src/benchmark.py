@@ -131,7 +131,6 @@ def profile_function(fn: Callable, *args, output_path: str | None = None, **kwar
 
 
 def measure_memory(fn: Callable, *args, **kwargs) -> tuple[Any, float]:
-    """Returns (result, peak_memory_delta_MB). Uses tracemalloc when available."""
     import tracemalloc
     tracemalloc.start()
 

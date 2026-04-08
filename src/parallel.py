@@ -90,7 +90,6 @@ def sequential_site_training(
     site_ids: list[int],
     train_fn: Callable[[int], dict],
 ) -> dict[int, dict]:
-    """Sequential baseline for comparison against parallel version."""
     t0 = time.perf_counter()
     results = {}
     for sid in site_ids:
@@ -103,13 +102,11 @@ def sequential_site_training(
 def generate_work_items(
     site_ids: list[int], meter_types: list[int]
 ) -> list[tuple[int, int]]:
-    """Lazy generation of (site, meter) pairs using itertools."""
     return list(itertools.product(site_ids, meter_types))
 
 
 def chunked_dispatch(
     items: list, chunk_size: int
 ) -> list[list]:
-    """Split work items into chunks using itertools."""
     it = iter(items)
     return [list(itertools.islice(it, chunk_size)) for _ in range(0, len(items), chunk_size)]

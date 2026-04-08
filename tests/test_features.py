@@ -26,8 +26,6 @@ def _make_sample_data(n_hours: int = 200) -> pd.DataFrame:
 
 
 class TestLeakageSafety:
-    """Verify that no feature at time t depends on data from time > t."""
-
     def test_lag_features_no_future_leakage(self):
         df = _make_sample_data(200)
         df = add_lag_features(df, lag_hours=[24])

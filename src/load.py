@@ -43,7 +43,6 @@ SITE0_KBTU_TO_KWH = 0.293071
 
 
 def load_building_metadata(cfg: AppConfig) -> pd.DataFrame:
-    """Load and enrich building metadata with derived features."""
     path = cfg.paths.meta_path()
     if not path.exists():
         raise FileNotFoundError(f"Building metadata not found at {path}. Run: python scripts/download_data.py")
@@ -56,7 +55,6 @@ def load_building_metadata(cfg: AppConfig) -> pd.DataFrame:
 
 
 def load_weather(cfg: AppConfig) -> pd.DataFrame:
-    """Load weather data with per-site imputation for missing values."""
     path = cfg.paths.weather_path()
     if not path.exists():
         raise FileNotFoundError(f"Weather data not found at {path}. Run: python scripts/download_data.py")
@@ -78,8 +76,8 @@ def load_weather(cfg: AppConfig) -> pd.DataFrame:
     return weather
 
 
-def _build_weather_lookup(weather: pd.DataFrame) -> dict[tuple[int, pd.Timestamp], dict]:
-    lookup: dict = {}
+def _build_weather_lookup(weather: pd.DataFrame) -> dict:
+    lookup = {}
     cols = [c for c in weather.columns if c not in ("site_id", "timestamp")]
     for row in weather.itertuples(index=False):
         lookup[(row.site_id, row.timestamp)] = {c: getattr(row, c) for c in cols}
@@ -172,12 +170,6 @@ def stream_train_chunks(
     weather: pd.DataFrame,
     n_chunks: int | None = None,
 ) -> Generator[pd.DataFrame, None, None]:
-    """Stream training data in chunks, merging metadata and weather per chunk.
-
-    Yields cleaned DataFrames of size ~chunk_size. Each chunk has building
-    metadata and weather data joined. Uses itertools.islice for dev-mode
-    chunk limiting.
-    """
     path = cfg.paths.train_path()
     if not path.exists():
         raise FileNotFoundError(f"Training data not found at {path}. Run: python scripts/download_data.py")
@@ -204,11 +196,34 @@ def stream_train_chunks(
 
 
 def load_full_dataset(
-    cfg: AppConfig, n_chunks: int | None = None, clean: bool = True
+    cfg: AppConfig, n_chunks: int | None = None, clean: bool = True,
+    threaded: bool = False, n_threads: int = 4,
 ) -> pd.DataFrame:
     meta = load_building_metadata(cfg)
     weather = load_weather(cfg)
-    frames = list(stream_train_chunks(cfg, meta, weather, n_chunks=n_chunks))
+
+    if threaded:
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        path = cfg.paths.train_path()
+        raw_chunks = list(itertools.islice(
+            pd.read_csv(path, dtype=TRAIN_DTYPES, parse_dates=["timestamp"], chunksize=cfg.pipeline.chunk_size),
+            n_chunks,
+        ))
+
+        def _process_chunk(chunk):
+            chunk = chunk.merge(meta, on="building_id", how="left")
+            chunk = chunk.merge(weather, on=["site_id", "timestamp"], how="left")
+            return _clean_readings(chunk)
+
+        frames = []
+        with ThreadPoolExecutor(max_workers=n_threads) as pool:
+            futures = {pool.submit(_process_chunk, c): i for i, c in enumerate(raw_chunks)}
+            for future in as_completed(futures):
+                frames.append(future.result())
+                logger.info("Threaded chunk %d merged", futures[future])
+    else:
+        frames = list(stream_train_chunks(cfg, meta, weather, n_chunks=n_chunks))
+
     df = pd.concat(frames, ignore_index=True)
 
     if clean:

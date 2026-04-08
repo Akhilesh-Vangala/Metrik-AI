@@ -21,7 +21,11 @@ from src.model import (
 from src.anomaly import detect_anomalies, aggregate_anomalies
 from src.decision import build_audit_list, export_audit_list
 from src.benchmark import BenchmarkSuite, profile_function, measure_memory
-from src.eda import run_eda, plot_feature_importance, plot_predictions_vs_actual, plot_anomaly_distribution
+from src.eda import (
+    run_eda, plot_feature_importance, plot_predictions_vs_actual,
+    plot_anomaly_distribution, plot_model_comparison,
+    plot_benchmark_speedups, plot_parallel_speedup,
+)
 
 
 def setup_logging(verbose: bool = False):
@@ -131,6 +135,7 @@ def run(ctx, n_chunks: int | None, save_model_path: str):
         plot_feature_importance(lgbm_result.metadata["feature_importance"], plots_dir)
     plot_predictions_vs_actual(val_df[cfg.pipeline.target_col].values, lgbm_result.predictions, plots_dir)
     plot_anomaly_distribution(val_df, plots_dir)
+    plot_model_comparison(all_results, plots_dir)
 
     print(f"\n{'='*60}")
     print(f"  Metrik AI Pipeline Complete ({elapsed:.1f}s)")
@@ -236,6 +241,7 @@ def benchmark(ctx, n_chunks: int):
 
     results_path = cfg.paths.results_path() / "benchmarks.csv"
     pd.DataFrame(suite.summary_table()).to_csv(results_path, index=False)
+    plot_benchmark_speedups(results_path, cfg.paths.results_path() / "plots")
     print(f"\nBenchmarks saved to {results_path}")
 
 
@@ -288,6 +294,7 @@ def parallel_benchmark(ctx, n_workers_list: str, n_chunks: int):
         {"n_workers": k, "time_seconds": round(v, 3), "speedup": round(timings[1] / v, 2) if v > 0 else 0}
         for k, v in sorted(timings.items())
     ]).to_csv(results_path, index=False)
+    plot_parallel_speedup(results_path, cfg.paths.results_path() / "plots")
     print(f"\nParallel benchmarks saved to {results_path}")
 
 

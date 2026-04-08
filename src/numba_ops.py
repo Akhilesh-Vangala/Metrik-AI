@@ -120,7 +120,6 @@ def flag_anomalies_numba(
 
 
 def warmup():
-    """Run once to trigger JIT compilation before benchmarking."""
     dummy = np.random.randn(1000).astype(np.float64)
     modified_zscore_numba(dummy)
     rolling_mean_numba(dummy, 24)
