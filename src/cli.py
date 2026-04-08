@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import sys
 import time
 from pathlib import Path
 
@@ -10,9 +9,15 @@ import numpy as np
 import pandas as pd
 
 from src.config import load_config
-from src.load import load_building_metadata, load_weather, stream_train_chunks, load_full_dataset
-from src.features import build_features, get_feature_columns
-from src.model import time_based_split, train_baseline_mean, train_baseline_lag, train_lightgbm, compute_residuals
+from src.load import (
+    load_building_metadata, load_weather, stream_train_chunks,
+    load_full_dataset, remove_outliers, detect_zero_streaks, data_quality_report,
+)
+from src.features import build_features, build_features_naive, get_feature_columns
+from src.model import (
+    time_based_split, train_baseline_mean, train_baseline_lag, train_lightgbm,
+    train_site_model, compute_residuals, save_model, save_results, save_predictions,
+)
 from src.anomaly import detect_anomalies, aggregate_anomalies
 from src.decision import build_audit_list, export_audit_list
 from src.benchmark import BenchmarkSuite, profile_function, measure_memory
@@ -38,71 +43,115 @@ def cli(ctx, config_path: str, verbose: bool):
 
 
 @cli.command()
-@click.option("--n-chunks", type=int, default=None, help="Limit number of chunks (for dev)")
+@click.option("--n-chunks", type=int, default=None, help="Limit chunks for dev mode")
+@click.option("--save-model-path", default="results/model.lgb", help="Where to save the trained model")
 @click.pass_context
-def run(ctx, n_chunks: int | None):
-    """Run the full pipeline: load -> features -> model -> anomaly -> audit."""
+def run(ctx, n_chunks: int | None, save_model_path: str):
+    """Full pipeline: load -> clean -> features -> model -> anomaly -> audit."""
     cfg = ctx.obj["cfg"]
     t_start = time.perf_counter()
+    results_dir = cfg.paths.results_path()
+    log = logging.getLogger("pipeline")
 
-    logging.getLogger(__name__).info("Starting Metrik AI pipeline")
+    log.info("=== Metrik AI Pipeline ===")
 
     meta = load_building_metadata(cfg)
     weather = load_weather(cfg)
 
+    log.info("--- Stage 1: Data Loading ---")
     frames = []
     for chunk in stream_train_chunks(cfg, meta, weather, n_chunks=n_chunks):
-        chunk = build_features(chunk, cfg.features)
         frames.append(chunk)
-
     df = pd.concat(frames, ignore_index=True)
     del frames
 
+    log.info("--- Stage 2: Data Cleaning ---")
+    df = remove_outliers(df)
+    df = detect_zero_streaks(df)
+    quality = data_quality_report(df, meta)
+    quality.to_csv(results_dir / "data_quality.csv", index=False)
+
+    log.info("--- Stage 3: Feature Engineering ---")
+    df = build_features(df, cfg.features)
     feat_cols = get_feature_columns(df)
     df = df.dropna(subset=feat_cols + [cfg.pipeline.target_col])
 
+    log.info("--- Stage 4: Train/Val Split ---")
     train_df, val_df = time_based_split(df, cfg.pipeline.validation_months)
 
+    log.info("--- Stage 5: Model Training ---")
     baseline_result = train_baseline_mean(train_df, val_df, cfg.pipeline.target_col)
     lag_result = train_baseline_lag(train_df, val_df, cfg.pipeline.target_col)
     lgbm_result = train_lightgbm(train_df, val_df, cfg)
 
+    if lgbm_result.metadata.get("model"):
+        save_model(lgbm_result.metadata["model"], save_model_path)
+
+    save_predictions(val_df, lgbm_result.predictions, results_dir / "predictions.csv")
+
+    log.info("--- Stage 6: Anomaly Detection ---")
     residuals = compute_residuals(val_df[cfg.pipeline.target_col].values, lgbm_result.predictions)
     val_df = val_df.copy()
     val_df["residual"] = residuals
-
     val_df = detect_anomalies(val_df, cfg=cfg.anomaly)
     anomaly_summary = aggregate_anomalies(val_df)
+    anomaly_summary.to_csv(results_dir / "anomaly_summary.csv", index=False)
 
+    log.info("--- Stage 7: Decision Support ---")
     audit = build_audit_list(anomaly_summary, meta, min_hours=cfg.anomaly.min_hours)
-    output_path = cfg.paths.results_path() / "audit_list.csv"
-    export_audit_list(audit, output_path)
+    export_audit_list(audit, results_dir / "audit_list.csv")
 
     elapsed = time.perf_counter() - t_start
 
+    rmse_improvement = (1 - lgbm_result.rmse / baseline_result.rmse) * 100
+
+    all_results = {
+        "rows_processed": len(df),
+        "train_rows": len(train_df),
+        "val_rows": len(val_df),
+        "n_features": len(feat_cols),
+        "baseline_mean_rmse": baseline_result.rmse,
+        "baseline_lag24_rmse": lag_result.rmse,
+        "lightgbm_rmse": lgbm_result.rmse,
+        "lightgbm_cv_rmse": lgbm_result.cv_rmse,
+        "lightgbm_mae": lgbm_result.mae,
+        "rmse_improvement_pct": round(rmse_improvement, 2),
+        "anomalies_flagged": int(val_df["is_anomaly"].sum()),
+        "anomaly_rate_pct": round(100 * val_df["is_anomaly"].mean(), 2),
+        "audit_list_entries": len(audit),
+        "total_time_seconds": round(elapsed, 2),
+        "feature_importance": lgbm_result.metadata.get("feature_importance", {}),
+    }
+    save_results(all_results, results_dir / "pipeline_results.json")
+
     print(f"\n{'='*60}")
-    print(f"Metrik AI Pipeline Complete ({elapsed:.1f}s)")
+    print(f"  Metrik AI Pipeline Complete ({elapsed:.1f}s)")
     print(f"{'='*60}")
-    print(f"  Rows processed:   {len(df):,}")
-    print(f"  Baseline RMSE:    {baseline_result.rmse:.4f}")
-    print(f"  Lag24 RMSE:       {lag_result.rmse:.4f}")
-    print(f"  LightGBM RMSE:    {lgbm_result.rmse:.4f}")
-    print(f"  RMSE improvement: {(1 - lgbm_result.rmse / baseline_result.rmse) * 100:.1f}%")
-    print(f"  Anomalies found:  {val_df['is_anomaly'].sum():,}")
-    print(f"  Audit list:       {output_path}")
+    print(f"  Rows processed:      {len(df):,}")
+    print(f"  Features used:       {len(feat_cols)}")
+    print(f"  Baseline mean RMSE:  {baseline_result.rmse:.4f}")
+    print(f"  Baseline lag24 RMSE: {lag_result.rmse:.4f}")
+    print(f"  LightGBM RMSE:       {lgbm_result.rmse:.4f}")
+    print(f"  LightGBM MAE:        {lgbm_result.mae:.4f}")
+    print(f"  RMSE improvement:    {rmse_improvement:.1f}%")
+    print(f"  Anomalies flagged:   {val_df['is_anomaly'].sum():,}")
+    print(f"  Audit list entries:  {len(audit)}")
+    print(f"  Results saved to:    {results_dir}/")
     print(f"{'='*60}\n")
 
 
 @cli.command()
+@click.option("--n-chunks", type=int, default=2)
 @click.pass_context
-def benchmark(ctx):
-    """Run optimization benchmarks and generate comparison tables."""
-    from src.numba_ops import modified_zscore_numba, warmup as numba_warmup
+def benchmark(ctx, n_chunks: int):
+    """Run comprehensive benchmarks across all optimization techniques."""
+    from src.numba_ops import modified_zscore_numba, rolling_mean_numba, warmup as numba_warmup
     from src.anomaly import modified_zscore_naive, modified_zscore_vectorized
 
     cfg = ctx.obj["cfg"]
     suite = BenchmarkSuite()
 
+    print("\n=== Anomaly Scoring Benchmarks ===")
     for size in [100_000, 500_000, 1_000_000]:
         data = np.random.randn(size).astype(np.float64)
 
@@ -112,6 +161,69 @@ def benchmark(ctx):
         numba_warmup()
         suite.time_function("anomaly_scoring", "numba_jit", modified_zscore_numba, data, input_size=size)
 
+    try:
+        from src.cython_kernels import modified_zscore_cython
+        for size in [100_000, 500_000, 1_000_000]:
+            data = np.random.randn(size).astype(np.float64)
+            suite.time_function("anomaly_scoring", "cython", modified_zscore_cython, data, input_size=size)
+    except ImportError:
+        print("  (Cython not compiled — run: python setup.py build_ext --inplace)")
+
+    try:
+        from src.gpu_ops import modified_zscore_gpu, GPU_AVAILABLE
+        if GPU_AVAILABLE:
+            for size in [100_000, 500_000, 1_000_000]:
+                data = np.random.randn(size).astype(np.float64)
+                suite.time_function("anomaly_scoring", "cupy_gpu", modified_zscore_gpu, data, input_size=size)
+        else:
+            print("  (GPU not available — CuPy benchmarks skipped)")
+    except ImportError:
+        print("  (CuPy not installed — GPU benchmarks skipped)")
+
+    print("\n=== Feature Engineering Benchmarks ===")
+    from src.features import build_features, build_features_naive
+
+    sample_size = 50_000
+    rng = np.random.RandomState(cfg.pipeline.seed)
+    sample_df = pd.DataFrame({
+        "building_id": rng.randint(0, 50, sample_size).astype(np.int16),
+        "meter": rng.randint(0, 4, sample_size).astype(np.int8),
+        "timestamp": pd.date_range("2016-01-01", periods=sample_size, freq="h"),
+        "meter_reading": rng.exponential(200, sample_size).astype(np.float32),
+        "site_id": rng.randint(0, 5, sample_size).astype(np.int8),
+        "primary_use": pd.Categorical(rng.choice(["Education", "Office", "Lodging"], sample_size)),
+        "square_feet": rng.uniform(5000, 100000, sample_size).astype(np.float32),
+        "log_square_feet": np.log1p(rng.uniform(5000, 100000, sample_size)).astype(np.float32),
+        "year_built": rng.uniform(1960, 2015, sample_size).astype(np.float32),
+        "building_age": rng.uniform(2, 57, sample_size).astype(np.float32),
+        "air_temperature": rng.uniform(-5, 40, sample_size).astype(np.float32),
+        "dew_temperature": rng.uniform(-10, 30, sample_size).astype(np.float32),
+        "wind_speed": rng.uniform(0, 15, sample_size).astype(np.float32),
+        "cloud_coverage": rng.uniform(0, 9, sample_size).astype(np.float32),
+    })
+
+    small_sample = sample_df.head(5000).copy()
+    suite.time_function("feature_engineering", "naive_iterrows", build_features_naive, small_sample, cfg.features, input_size=5000)
+    suite.time_function("feature_engineering", "vectorized", build_features, sample_df.copy(), cfg.features, input_size=sample_size)
+
+    print("\n=== Rolling Window Benchmarks ===")
+    from src.numba_ops import rolling_mean_numba
+    for size in [100_000, 500_000]:
+        data = rng.randn(size).astype(np.float64)
+
+        def _pandas_rolling(d):
+            return pd.Series(d).rolling(24, min_periods=6).mean().values
+
+        suite.time_function("rolling_mean", "pandas", _pandas_rolling, data, input_size=size)
+        suite.time_function("rolling_mean", "numba_jit", rolling_mean_numba, data, 24, input_size=size)
+
+    print("\n=== Memory Benchmarks ===")
+    _, mem_full = measure_memory(lambda: pd.DataFrame({"x": np.random.randn(2_000_000).astype(np.float64)}))
+    _, mem_f32 = measure_memory(lambda: pd.DataFrame({"x": np.random.randn(2_000_000).astype(np.float32)}))
+    print(f"  float64 (2M rows): {mem_full:.1f} MB")
+    print(f"  float32 (2M rows): {mem_f32:.1f} MB")
+    print(f"  Memory reduction:  {(1 - mem_f32 / mem_full) * 100:.0f}%")
+
     suite.print_summary()
 
     results_path = cfg.paths.results_path() / "benchmarks.csv"
@@ -120,22 +232,74 @@ def benchmark(ctx):
 
 
 @cli.command()
+@click.option("--n-workers-list", default="1,2,4,8", help="Comma-separated worker counts")
+@click.option("--n-chunks", type=int, default=2)
+@click.pass_context
+def parallel_benchmark(ctx, n_workers_list: str, n_chunks: int):
+    """Measure parallel speedup across different worker counts."""
+    from src.parallel import parallel_model_training, sequential_site_training
+    from functools import partial
+
+    cfg = ctx.obj["cfg"]
+    worker_counts = [int(x.strip()) for x in n_workers_list.split(",")]
+
+    log = logging.getLogger("parallel")
+    log.info("Loading data for parallel benchmark...")
+
+    df = load_full_dataset(cfg, n_chunks=n_chunks)
+    df = build_features(df, cfg.features)
+    feat_cols = get_feature_columns(df)
+    df = df.dropna(subset=feat_cols + [cfg.pipeline.target_col])
+    train_df, val_df = time_based_split(df, cfg.pipeline.validation_months)
+
+    site_ids = sorted(train_df["site_id"].unique().tolist())
+    log.info("Sites to train: %s", site_ids)
+
+    def _train_fn(sid):
+        return train_site_model(sid, train_df, val_df, cfg)
+
+    print(f"\n=== Parallel Training Speedup (sites={len(site_ids)}) ===")
+    timings = {}
+
+    t0 = time.perf_counter()
+    sequential_site_training(site_ids, _train_fn)
+    timings[1] = time.perf_counter() - t0
+    print(f"  Sequential (1 worker): {timings[1]:.2f}s")
+
+    for n in worker_counts:
+        if n <= 1:
+            continue
+        t0 = time.perf_counter()
+        parallel_model_training(site_ids, _train_fn, n_workers=n)
+        timings[n] = time.perf_counter() - t0
+        speedup = timings[1] / timings[n] if timings[n] > 0 else 0
+        print(f"  {n} workers: {timings[n]:.2f}s (speedup: {speedup:.1f}x)")
+
+    results_path = cfg.paths.results_path() / "parallel_benchmark.csv"
+    pd.DataFrame([
+        {"n_workers": k, "time_seconds": round(v, 3), "speedup": round(timings[1] / v, 2) if v > 0 else 0}
+        for k, v in sorted(timings.items())
+    ]).to_csv(results_path, index=False)
+    print(f"\nParallel benchmarks saved to {results_path}")
+
+
+@cli.command()
 @click.pass_context
 def profile(ctx):
-    """Profile the pipeline and save results."""
+    """Profile the pipeline with cProfile and save results."""
     cfg = ctx.obj["cfg"]
     output_dir = Path(cfg.profiling.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     def pipeline_subset():
-        meta = load_building_metadata(cfg)
-        weather = load_weather(cfg)
-        frames = list(stream_train_chunks(cfg, meta, weather, n_chunks=2))
-        df = pd.concat(frames, ignore_index=True)
+        df = load_full_dataset(cfg, n_chunks=2)
         build_features(df, cfg.features)
 
     report = profile_function(pipeline_subset, output_path=str(output_dir / "pipeline.prof"))
     print(report)
+
+    _, peak_mb = measure_memory(pipeline_subset)
+    print(f"\nPeak memory for 2-chunk pipeline: {peak_mb:.1f} MB")
 
 
 @cli.command()
@@ -146,6 +310,21 @@ def spark(ctx):
     cfg = ctx.obj["cfg"]
     result = run_spark_pipeline(cfg.paths.data_dir)
     print(f"Spark pipeline: {result['rows']:,} rows in {result['elapsed_seconds']:.1f}s")
+
+
+@cli.command()
+@click.option("--n-chunks", type=int, default=2)
+@click.pass_context
+def quality(ctx, n_chunks: int):
+    """Generate data quality report."""
+    cfg = ctx.obj["cfg"]
+    meta = load_building_metadata(cfg)
+    df = load_full_dataset(cfg, n_chunks=n_chunks)
+    report = data_quality_report(df, meta)
+    out = cfg.paths.results_path() / "data_quality.csv"
+    report.to_csv(out, index=False)
+    print(f"Quality report saved to {out}")
+    print(report.to_string(index=False))
 
 
 def main():
