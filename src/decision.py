@@ -29,10 +29,16 @@ def build_audit_list(
         0.0,
     ).astype(np.float32)
 
+    if "max_streak" in audit.columns:
+        audit["streak_severity"] = (audit["max_streak"] / audit["total_hours"]).astype(np.float32)
+    else:
+        audit["streak_severity"] = 0.0
+
     score_weights = {
-        "anomaly_rate": 0.4,
-        "max_anomaly_score": 0.3,
-        "excess_per_sqft": 0.3,
+        "anomaly_rate": 0.3,
+        "max_anomaly_score": 0.25,
+        "excess_per_sqft": 0.25,
+        "streak_severity": 0.2,
     }
 
     for col in score_weights:
@@ -55,7 +61,7 @@ def build_audit_list(
     output_cols = [
         "rank", "building_id", "meter", "site_id", "primary_use",
         "square_feet", "anomaly_rate", "anomaly_hours", "total_hours",
-        "mean_anomaly_score", "max_anomaly_score",
+        "max_streak", "mean_anomaly_score", "max_anomaly_score",
         "total_excess", "excess_per_sqft", "priority_score",
     ]
     return audit[[c for c in output_cols if c in audit.columns]]

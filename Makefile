@@ -1,4 +1,4 @@
-.PHONY: setup data cython test run benchmark profile spark clean
+.PHONY: setup data cython test run run-dev benchmark parallel-benchmark profile spark quality clean
 
 PYTHON = python
 CONFIG = config/config.yaml
@@ -25,11 +25,17 @@ run-dev:
 benchmark:
 	$(PYTHON) -m src.cli --config $(CONFIG) benchmark
 
+parallel-benchmark:
+	$(PYTHON) -m src.cli --config $(CONFIG) parallel-benchmark
+
 profile:
 	$(PYTHON) -m src.cli --config $(CONFIG) profile
 
 spark:
 	$(PYTHON) -m src.cli --config $(CONFIG) spark
+
+quality:
+	$(PYTHON) -m src.cli --config $(CONFIG) quality
 
 clean:
 	rm -rf build/ dist/ *.egg-info

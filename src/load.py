@@ -87,7 +87,7 @@ def _clean_readings(df: pd.DataFrame) -> pd.DataFrame:
     n_neg = neg_mask.sum()
     if n_neg > 0:
         logger.warning("Dropping %d negative readings (%.2f%%)", n_neg, 100 * n_neg / n_before)
-        df = df[~neg_mask]
+        df = df[~neg_mask].copy()
 
     if "site_id" in df.columns:
         site0_elec = (df["site_id"] == 0) & (df["meter"] == 0)
