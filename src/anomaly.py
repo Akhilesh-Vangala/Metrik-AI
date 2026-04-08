@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import itertools
 import logging
+import operator
 import time
+from collections import defaultdict
 
 import numpy as np
 import pandas as pd
@@ -139,3 +142,25 @@ def aggregate_anomalies(df: pd.DataFrame) -> pd.DataFrame:
 
     agg["anomaly_rate"] = (agg["anomaly_hours"] / agg["total_hours"]).astype(np.float32)
     return agg.sort_values("anomaly_rate", ascending=False)
+
+
+def summarize_anomalies_by_site(df: pd.DataFrame) -> dict[int, dict]:
+    """Per-site anomaly summary using defaultdict, operator, and accumulate."""
+    site_counts: defaultdict[int, list[float]] = defaultdict(list)
+
+    for row in df.loc[df["is_anomaly"] == 1].itertuples(index=False):
+        site_counts[operator.attrgetter("site_id")(row)].append(
+            operator.attrgetter("anomaly_score")(row)
+        )
+
+    summary = {}
+    for site_id, scores in sorted(site_counts.items(), key=operator.itemgetter(0)):
+        abs_scores = list(map(abs, scores))
+        cumulative = list(itertools.accumulate(abs_scores, operator.add))
+        summary[site_id] = {
+            "n_anomalies": len(scores),
+            "mean_severity": float(np.mean(abs_scores)),
+            "cumulative_severity": cumulative[-1] if cumulative else 0.0,
+        }
+
+    return summary

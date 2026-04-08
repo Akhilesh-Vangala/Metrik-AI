@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import itertools
 import logging
 from functools import lru_cache
 from typing import Sequence
@@ -204,20 +205,22 @@ def build_features_naive(df: pd.DataFrame, cfg: FeaturesConfig) -> pd.DataFrame:
     return df
 
 
-FEATURE_COLUMNS = [
-    "hour", "dayofweek", "month", "is_weekend", "is_holiday",
-    "day_of_year", "hour_sin", "hour_cos", "month_sin", "month_cos",
-    "lag_24h", "lag_168h", "lag_diff_24h",
-    "rolling_mean_24h", "rolling_std_24h", "rolling_min_24h", "rolling_max_24h",
-    "rolling_mean_168h", "rolling_std_168h", "rolling_min_168h", "rolling_max_168h",
-    "log_square_feet", "building_age",
-    "primary_use_code",
-    "air_temperature", "dew_temperature", "temp_diff",
-    "relative_humidity", "temp_squared", "wind_chill",
-    "cloud_coverage", "wind_speed",
-    "hour_weekend", "temp_x_hour", "sqft_x_temp", "reading_vs_rolling",
-    "site_id", "meter",
-]
+_TIME_FEATURES = ["hour", "dayofweek", "month", "is_weekend", "is_holiday",
+                   "day_of_year", "hour_sin", "hour_cos", "month_sin", "month_cos"]
+_LAG_FEATURES = ["lag_24h", "lag_168h", "lag_diff_24h"]
+_ROLLING_FEATURES = ["rolling_mean_24h", "rolling_std_24h", "rolling_min_24h", "rolling_max_24h",
+                     "rolling_mean_168h", "rolling_std_168h", "rolling_min_168h", "rolling_max_168h"]
+_BUILDING_FEATURES = ["log_square_feet", "building_age", "primary_use_code"]
+_WEATHER_FEATURES = ["air_temperature", "dew_temperature", "temp_diff",
+                     "relative_humidity", "temp_squared", "wind_chill",
+                     "cloud_coverage", "wind_speed"]
+_INTERACTION_FEATURES = ["hour_weekend", "temp_x_hour", "sqft_x_temp", "reading_vs_rolling"]
+_ID_FEATURES = ["site_id", "meter"]
+
+FEATURE_COLUMNS = list(itertools.chain(
+    _TIME_FEATURES, _LAG_FEATURES, _ROLLING_FEATURES,
+    _BUILDING_FEATURES, _WEATHER_FEATURES, _INTERACTION_FEATURES, _ID_FEATURES,
+))
 
 
 def get_feature_columns(df: pd.DataFrame) -> list[str]:

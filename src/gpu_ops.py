@@ -13,6 +13,12 @@ try:
 except ImportError:
     GPU_AVAILABLE = False
 
+try:
+    from numba import cuda as numba_cuda
+    NUMBA_CUDA_AVAILABLE = numba_cuda.is_available()
+except ImportError:
+    NUMBA_CUDA_AVAILABLE = False
+
 
 def modified_zscore_gpu(residuals: np.ndarray) -> np.ndarray:
     if not GPU_AVAILABLE:
@@ -68,6 +74,53 @@ def rolling_mean_gpu(values: np.ndarray, window: int) -> np.ndarray:
     result = cp.where(window_count > 0, window_sum / window_count, cp.nan)
 
     return cp.asnumpy(result).astype(np.float32)
+
+
+def _define_cuda_kernel():
+    """Define Numba CUDA kernel for anomaly scoring (Lecture 06 @cuda.jit pattern)."""
+    @numba_cuda.jit
+    def _zscore_kernel(residuals, median_val, inv_mad_scaled, out):
+        pos = numba_cuda.grid(1)
+        if pos < residuals.shape[0]:
+            out[pos] = inv_mad_scaled * (residuals[pos] - median_val)
+    return _zscore_kernel
+
+
+_cuda_zscore_kernel = None
+
+
+def modified_zscore_cuda_kernel(residuals: np.ndarray) -> np.ndarray:
+    """Anomaly scoring via Numba CUDA kernel with explicit thread/block grid."""
+    global _cuda_zscore_kernel
+    if not NUMBA_CUDA_AVAILABLE:
+        raise RuntimeError("Numba CUDA not available (no NVIDIA GPU detected)")
+
+    if _cuda_zscore_kernel is None:
+        _cuda_zscore_kernel = _define_cuda_kernel()
+
+    t0 = time.perf_counter()
+
+    data = residuals.astype(np.float64)
+    median_val = float(np.median(data))
+    mad = float(np.median(np.abs(data - median_val)))
+    if mad == 0.0:
+        mad = 1e-10
+    inv_mad_scaled = 0.6745 / mad
+
+    d_residuals = numba_cuda.to_device(data)
+    d_out = numba_cuda.device_array(len(data), dtype=np.float64)
+
+    threads_per_block = 256
+    blocks_per_grid = (len(data) + threads_per_block - 1) // threads_per_block
+
+    _cuda_zscore_kernel[blocks_per_grid, threads_per_block](
+        d_residuals, median_val, inv_mad_scaled, d_out,
+    )
+
+    result = d_out.copy_to_host().astype(np.float32)
+    elapsed = time.perf_counter() - t0
+    logger.info("CUDA kernel anomaly scoring: %d values in %.4fs", len(residuals), elapsed)
+    return result
 
 
 def check_gpu_status() -> dict:

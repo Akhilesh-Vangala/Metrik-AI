@@ -10,6 +10,7 @@ from typing import Any
 import lightgbm as lgb
 import numpy as np
 import pandas as pd
+from scipy.optimize import minimize_scalar
 from sklearn.metrics import mean_squared_error, mean_absolute_error
 
 from src.config import AppConfig
@@ -210,6 +211,45 @@ def save_predictions(
     out["residual"] = out["meter_reading"] - out["predicted"]
     out.to_csv(path, index=False)
     logger.info("Predictions saved to %s (%d rows)", path, len(out))
+
+
+def optimize_learning_rate(
+    train: pd.DataFrame,
+    val: pd.DataFrame,
+    cfg: AppConfig,
+    lr_bounds: tuple[float, float] = (0.005, 0.3),
+) -> float:
+    """Find optimal LightGBM learning rate via scipy.optimize.minimize_scalar."""
+    target = cfg.pipeline.target_col
+    feat_cols = get_feature_columns(train)
+    cat_cols = [c for c in ["primary_use_code", "site_id", "meter"] if c in feat_cols]
+
+    X_train = train[feat_cols].copy()
+    y_train = train[target].values
+    X_val = val[feat_cols].copy()
+    y_val = val[target].values
+
+    for c in cat_cols:
+        X_train[c] = X_train[c].astype("category")
+        X_val[c] = X_val[c].astype("category")
+
+    dtrain = lgb.Dataset(X_train, label=y_train, categorical_feature=cat_cols, free_raw_data=False)
+    dval = lgb.Dataset(X_val, label=y_val, reference=dtrain, categorical_feature=cat_cols, free_raw_data=False)
+
+    def objective(lr: float) -> float:
+        params = {**cfg.model.lgbm_params, "learning_rate": float(lr), "verbose": -1}
+        model = lgb.train(
+            params, dtrain, num_boost_round=200,
+            valid_sets=[dval], valid_names=["val"],
+            callbacks=[lgb.early_stopping(20), lgb.log_evaluation(0)],
+        )
+        preds = model.predict(X_val)
+        return float(np.sqrt(mean_squared_error(y_val, preds)))
+
+    result = minimize_scalar(objective, bounds=lr_bounds, method="bounded")
+    optimal_lr = float(result.x)
+    logger.info("Optimal learning rate: %.5f (RMSE=%.4f)", optimal_lr, result.fun)
+    return optimal_lr
 
 
 def compute_residuals(actual: np.ndarray, predicted: np.ndarray) -> np.ndarray:

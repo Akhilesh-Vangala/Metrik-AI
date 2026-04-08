@@ -3,10 +3,14 @@ from __future__ import annotations
 import itertools
 import logging
 import multiprocessing
+import operator
 import time
+from collections import defaultdict
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Callable
+from queue import Queue
+from threading import Lock, Thread
+from typing import Any, Callable
 
 import pandas as pd
 
@@ -112,3 +116,66 @@ def chunked_dispatch(
 ) -> list[list]:
     it = iter(items)
     return [list(itertools.islice(it, chunk_size)) for _ in range(0, len(items), chunk_size)]
+
+
+class ThreadedResultCollector:
+    """Thread-safe result collection via Queue + Lock + worker Threads."""
+
+    def __init__(self, n_workers: int = 4):
+        self._queue: Queue[tuple[Any, Callable, tuple] | None] = Queue()
+        self._lock = Lock()
+        self._results: dict[Any, Any] = {}
+        self._errors: defaultdict[str, list] = defaultdict(list)
+        self._workers: list[Thread] = []
+        self._n_workers = n_workers
+
+    def _worker_loop(self) -> None:
+        while True:
+            item = self._queue.get()
+            if item is None:
+                self._queue.task_done()
+                break
+            task_id, fn, args = item
+            try:
+                result = fn(*args)
+                with self._lock:
+                    self._results[task_id] = result
+            except Exception as e:
+                with self._lock:
+                    self._errors[str(type(e).__name__)].append(task_id)
+                logger.error("Task %s failed: %s", task_id, e)
+            self._queue.task_done()
+
+    def submit(self, task_id: Any, fn: Callable, *args: Any) -> None:
+        self._queue.put((task_id, fn, args))
+
+    def start(self) -> None:
+        for i in range(self._n_workers):
+            t = Thread(target=self._worker_loop, name=f"collector-{i}", daemon=True)
+            t.start()
+            self._workers.append(t)
+
+    def collect(self) -> dict[Any, Any]:
+        for _ in self._workers:
+            self._queue.put(None)
+        self._queue.join()
+        for w in self._workers:
+            w.join()
+        return dict(self._results)
+
+    def get_errors(self) -> dict[str, list]:
+        return dict(self._errors)
+
+
+def threaded_io_tasks(
+    task_items: list[tuple[Any, Callable, tuple]],
+    n_workers: int = 4,
+) -> dict[Any, Any]:
+    """Run I/O-bound tasks using ThreadedResultCollector."""
+    collector = ThreadedResultCollector(n_workers=n_workers)
+    collector.start()
+    for task_id, fn, args in task_items:
+        collector.submit(task_id, fn, *args)
+    results = collector.collect()
+    logger.info("Threaded I/O: %d tasks completed, %d errors", len(results), sum(len(v) for v in collector.get_errors().values()))
+    return results

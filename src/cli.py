@@ -17,8 +17,9 @@ from src.features import build_features, build_features_naive, get_feature_colum
 from src.model import (
     time_based_split, train_baseline_mean, train_baseline_lag, train_lightgbm,
     train_site_model, compute_residuals, save_model, save_results, save_predictions,
+    optimize_learning_rate,
 )
-from src.anomaly import detect_anomalies, aggregate_anomalies
+from src.anomaly import detect_anomalies, aggregate_anomalies, summarize_anomalies_by_site
 from src.decision import build_audit_list, export_audit_list
 from src.benchmark import BenchmarkSuite, profile_function, measure_memory
 from src.eda import (
@@ -101,6 +102,10 @@ def run(ctx, n_chunks: int | None, save_model_path: str):
     val_df = detect_anomalies(val_df, cfg=cfg.anomaly)
     anomaly_summary = aggregate_anomalies(val_df)
     anomaly_summary.to_csv(results_dir / "anomaly_summary.csv", index=False)
+
+    site_summary = summarize_anomalies_by_site(val_df)
+    for sid, info in site_summary.items():
+        log.info("Site %d: %d anomalies, mean severity=%.2f", sid, info["n_anomalies"], info["mean_severity"])
 
     log.info("--- Stage 7: Decision Support ---")
     audit = build_audit_list(anomaly_summary, meta, min_hours=cfg.anomaly.min_hours)
@@ -254,7 +259,6 @@ def benchmark(ctx, n_chunks: int):
 def parallel_benchmark(ctx, n_workers_list: str, n_chunks: int):
     """Measure parallel speedup across different worker counts."""
     from src.parallel import parallel_model_training, sequential_site_training
-    from functools import partial
 
     cfg = ctx.obj["cfg"]
     worker_counts = [int(x.strip()) for x in n_workers_list.split(",")]
@@ -286,10 +290,7 @@ def parallel_benchmark(ctx, n_workers_list: str, n_chunks: int):
         if n <= 1:
             continue
         t0 = time.perf_counter()
-        parallel_model_training(
-            site_ids, _train_fn, n_workers=n,
-            train_df=train_df, val_df=val_df, cfg=cfg,
-        )
+        parallel_model_training(site_ids, _train_fn, n_workers=n)
         timings[n] = time.perf_counter() - t0
         speedup = timings[1] / timings[n] if timings[n] > 0 else 0
         print(f"  {n} workers: {timings[n]:.2f}s (speedup: {speedup:.1f}x)")
