@@ -14,8 +14,8 @@ data/*.zip
 data/*.parquet
 !data/README.md
 
-results/*
-!results/.gitkeep
+results/predictions.csv
+results/model.lgb
 
 .DS_Store
 *.swp
@@ -40,5 +40,6 @@ venv/
 *.prof
 *.lprof
 
+latex/
 Proposal Files/
 project pdfs/
