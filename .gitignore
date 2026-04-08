@@ -15,7 +15,6 @@ data/*.parquet
 !data/README.md
 
 results/predictions.csv
-results/model.lgb
 
 .DS_Store
 *.swp
