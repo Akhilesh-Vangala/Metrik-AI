@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import itertools
 import logging
-from pathlib import Path
 from typing import Generator
 
 import numpy as np
@@ -127,7 +126,6 @@ def detect_zero_streaks(df: pd.DataFrame, target_col: str = "meter_reading", min
     df = df.sort_values(["building_id", "meter", "timestamp"])
     is_zero = (df[target_col] == 0).astype(int)
 
-    group_key = ["building_id", "meter"]
     streaks = is_zero.groupby([df["building_id"], df["meter"]]).transform(
         lambda s: s.groupby((s != s.shift()).cumsum()).transform("sum")
     )

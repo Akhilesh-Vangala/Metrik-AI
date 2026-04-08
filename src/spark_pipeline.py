@@ -74,7 +74,7 @@ def add_time_features_spark(df: SparkDF) -> SparkDF:
     )
 
 
-def add_lag_features_spark(df: SparkDF, lag_hours: list[int] = None) -> SparkDF:
+def add_lag_features_spark(df: SparkDF, lag_hours: list[int] | None = None) -> SparkDF:
     if lag_hours is None:
         lag_hours = [24, 168]
 
@@ -87,7 +87,7 @@ def add_lag_features_spark(df: SparkDF, lag_hours: list[int] = None) -> SparkDF:
     return df
 
 
-def add_rolling_features_spark(df: SparkDF, windows: list[int] = None) -> SparkDF:
+def add_rolling_features_spark(df: SparkDF, windows: list[int] | None = None) -> SparkDF:
     if windows is None:
         windows = [24, 168]
 

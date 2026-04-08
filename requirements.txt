@@ -7,7 +7,6 @@ cython>=3.0
 pyyaml>=6.0
 pyarrow>=14.0
 holidays>=0.40
-memory-profiler>=0.61
 pyspark>=3.5
 click>=8.1
 pytest>=7.4

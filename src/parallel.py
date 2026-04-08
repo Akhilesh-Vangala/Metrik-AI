@@ -10,8 +10,6 @@ from typing import Callable
 
 import pandas as pd
 
-from src.config import AppConfig
-
 logger = logging.getLogger(__name__)
 
 _MP_CONTEXT = multiprocessing.get_context("spawn")
