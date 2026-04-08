@@ -2,7 +2,7 @@
 
 **Predicting and Optimizing Building Energy Consumption at Scale**
 
-A production-grade Python pipeline for hourly energy forecasting, anomaly detection, and decision support — built on the ASHRAE Great Energy Predictor III dataset (53.6M rows, 1,636 buildings, 19 sites).
+A production-grade Python pipeline for hourly energy forecasting, anomaly detection, and decision support — built on the ASHRAE Great Energy Predictor III dataset (20.2M training rows, 1,449 buildings, 16 sites).
 
 Developed for **DS-GA 1019 · Advanced Python for Data Science · NYU · Spring 2026**
 
@@ -19,7 +19,7 @@ Commercial buildings consume ~40% of all U.S. energy and waste 20–30% of it. O
 The pipeline decomposes the problem into three components that mirror the real-world Measurement & Verification (M&V) workflow used by energy services companies:
 
 ```
-train.csv (53.6M rows)
+train.csv (20.2M rows)
     │
     ▼ [1] Chunked I/O (2M rows/chunk, ~4 GB peak)
     │
@@ -136,12 +136,13 @@ All results are saved to `results/`:
 
 | Attribute | Value |
 |-----------|-------|
-| Training rows | ~53.6 million hourly records |
-| Buildings | 1,636 non-residential |
-| Meters | 3,053 (electricity, chilled water, steam, hot water) |
-| Sites | 19 (North America and Europe) |
-| Time span | January 2016 – December 2017 |
-| Compressed size | ~2–3 GB |
+| Training rows | 20,216,100 hourly records |
+| Buildings | 1,449 non-residential |
+| Meters | 2,380 (electricity, chilled water, steam, hot water) |
+| Sites | 16 (North America and Europe) |
+| Training period | January 2016 – December 2016 (1 year) |
+| Test period | January 2017 – May 2018 (41.7M rows, no labels) |
+| Total size | ~2.6 GB (all files) |
 
 **Known data issues handled by our pipeline:**
 - Site 0 electricity is in kBTU (not kWh) — converted at load time
@@ -196,7 +197,7 @@ metrik-ai/
 ├── src/                        # Core pipeline package
 │   ├── __init__.py             # Package marker (version)
 │   ├── __main__.py             # python -m src entry point
-│   ├── cli.py                  # Click CLI with 8 subcommands
+│   ├── cli.py                  # Click CLI with 7 subcommands
 │   ├── config.py               # YAML config → typed dataclasses (slots=True)
 │   ├── load.py                 # Chunked I/O, data cleaning, quality reporting
 │   ├── features.py             # Vectorized + naive feature engineering

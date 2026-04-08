@@ -9,8 +9,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from src.config import AppConfig
-
 logger = logging.getLogger(__name__)
 
 METER_NAMES = {0: "Electricity", 1: "Chilled Water", 2: "Steam", 3: "Hot Water"}

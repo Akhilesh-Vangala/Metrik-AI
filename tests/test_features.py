@@ -58,7 +58,7 @@ class TestLeakageSafety:
     def test_first_rolling_values_are_nan(self):
         df = _make_sample_data(200)
         df = add_rolling_features(df, windows=[24])
-        assert df["rolling_mean_24h"].iloc[0] != df["rolling_mean_24h"].iloc[0]  # NaN check
+        assert pd.isna(df["rolling_mean_24h"].iloc[0])
 
 
 class TestTimeFeatures:

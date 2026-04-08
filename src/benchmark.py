@@ -66,8 +66,10 @@ class BenchmarkSuite:
         logger.info("[%s] %s: %.4fs (n=%d)", name, method, elapsed, input_size)
         return result, br
 
-    def compare(self, name: str) -> dict[str, float]:
+    def compare(self, name: str, input_size: int | None = None) -> dict[str, float]:
         relevant = [r for r in self.results if r.name == name]
+        if input_size is not None:
+            relevant = [r for r in relevant if r.input_size == input_size]
         if len(relevant) < 2:
             return {}
 
@@ -100,13 +102,21 @@ class BenchmarkSuite:
                 f"{r.input_size:<12} {r.rows_per_second:<12.0f}"
             )
 
-        names = set(r.name for r in self.results)
-        for name in names:
-            speedups = self.compare(name)
+        seen = set()
+        for r in self.results:
+            key = (r.name, r.input_size)
+            if key in seen:
+                continue
+            seen.add(key)
+            speedups = self.compare(r.name, input_size=r.input_size)
             if speedups:
-                baseline_method = [r for r in self.results if r.name == name][0].method
+                baseline_method = [
+                    x for x in self.results
+                    if x.name == r.name and x.input_size == r.input_size
+                ][0].method
+                size_label = f"n={r.input_size:,}" if r.input_size else ""
                 for method, speedup in speedups.items():
-                    print(f"  {name}: {method} is {speedup:.1f}x faster than {baseline_method}")
+                    print(f"  {r.name} ({size_label}): {method} is {speedup:.1f}x faster than {baseline_method}")
 
 
 def profile_function(fn: Callable, *args, output_path: str | None = None, **kwargs) -> str:

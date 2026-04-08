@@ -196,28 +196,30 @@ def benchmark(ctx, n_chunks: int):
     print("\n=== Feature Engineering Benchmarks ===")
     from src.features import build_features, build_features_naive
 
-    sample_size = 50_000
     rng = np.random.RandomState(cfg.pipeline.seed)
-    sample_df = pd.DataFrame({
-        "building_id": rng.randint(0, 50, sample_size).astype(np.int16),
-        "meter": rng.randint(0, 4, sample_size).astype(np.int8),
-        "timestamp": pd.date_range("2016-01-01", periods=sample_size, freq="h"),
-        "meter_reading": rng.exponential(200, sample_size).astype(np.float32),
-        "site_id": rng.randint(0, 5, sample_size).astype(np.int8),
-        "primary_use": pd.Categorical(rng.choice(["Education", "Office", "Lodging"], sample_size)),
-        "square_feet": rng.uniform(5000, 100000, sample_size).astype(np.float32),
-        "log_square_feet": np.log1p(rng.uniform(5000, 100000, sample_size)).astype(np.float32),
-        "year_built": rng.uniform(1960, 2015, sample_size).astype(np.float32),
-        "building_age": rng.uniform(2, 57, sample_size).astype(np.float32),
-        "air_temperature": rng.uniform(-5, 40, sample_size).astype(np.float32),
-        "dew_temperature": rng.uniform(-10, 30, sample_size).astype(np.float32),
-        "wind_speed": rng.uniform(0, 15, sample_size).astype(np.float32),
-        "cloud_coverage": rng.uniform(0, 9, sample_size).astype(np.float32),
-    })
 
-    small_sample = sample_df.head(5000).copy()
-    suite.time_function("feature_engineering", "naive_iterrows", build_features_naive, small_sample, cfg.features, input_size=5000)
-    suite.time_function("feature_engineering", "vectorized", build_features, sample_df.copy(), cfg.features, input_size=sample_size)
+    def _make_sample(n):
+        return pd.DataFrame({
+            "building_id": rng.randint(0, 50, n).astype(np.int16),
+            "meter": rng.randint(0, 4, n).astype(np.int8),
+            "timestamp": pd.date_range("2016-01-01", periods=n, freq="h"),
+            "meter_reading": rng.exponential(200, n).astype(np.float32),
+            "site_id": rng.randint(0, 5, n).astype(np.int8),
+            "primary_use": pd.Categorical(rng.choice(["Education", "Office", "Lodging"], n)),
+            "square_feet": rng.uniform(5000, 100000, n).astype(np.float32),
+            "log_square_feet": np.log1p(rng.uniform(5000, 100000, n)).astype(np.float32),
+            "year_built": rng.uniform(1960, 2015, n).astype(np.float32),
+            "building_age": rng.uniform(2, 57, n).astype(np.float32),
+            "air_temperature": rng.uniform(-5, 40, n).astype(np.float32),
+            "dew_temperature": rng.uniform(-10, 30, n).astype(np.float32),
+            "wind_speed": rng.uniform(0, 15, n).astype(np.float32),
+            "cloud_coverage": rng.uniform(0, 9, n).astype(np.float32),
+        })
+
+    for feat_size in [5_000, 10_000, 50_000]:
+        sample = _make_sample(feat_size)
+        suite.time_function("feature_engineering", "naive_iterrows", build_features_naive, sample.copy(), cfg.features, input_size=feat_size)
+        suite.time_function("feature_engineering", "vectorized", build_features, sample.copy(), cfg.features, input_size=feat_size)
 
     print("\n=== Rolling Window Benchmarks ===")
     from src.numba_ops import rolling_mean_numba
@@ -284,7 +286,10 @@ def parallel_benchmark(ctx, n_workers_list: str, n_chunks: int):
         if n <= 1:
             continue
         t0 = time.perf_counter()
-        parallel_model_training(site_ids, _train_fn, n_workers=n)
+        parallel_model_training(
+            site_ids, _train_fn, n_workers=n,
+            train_df=train_df, val_df=val_df, cfg=cfg,
+        )
         timings[n] = time.perf_counter() - t0
         speedup = timings[1] / timings[n] if timings[n] > 0 else 0
         print(f"  {n} workers: {timings[n]:.2f}s (speedup: {speedup:.1f}x)")

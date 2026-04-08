@@ -51,23 +51,21 @@ def rolling_mean_gpu(values: np.ndarray, window: int) -> np.ndarray:
 
     d_values = cp.asarray(values.astype(np.float64))
     n = len(d_values)
-    result = cp.empty(n, dtype=cp.float64)
 
-    kernel = cp.cumsum(cp.where(cp.isnan(d_values), 0.0, d_values))
-    counts = cp.cumsum(~cp.isnan(d_values))
+    valid_mask = ~cp.isnan(d_values)
+    safe_values = cp.where(valid_mask, d_values, 0.0)
 
-    for i in range(n):
-        if i < window:
-            if int(counts[i]) > 0:
-                result[i] = kernel[i] / counts[i]
-            else:
-                result[i] = cp.nan
-        else:
-            valid = int(counts[i] - counts[i - window])
-            if valid > 0:
-                result[i] = (kernel[i] - kernel[i - window]) / valid
-            else:
-                result[i] = cp.nan
+    cum_sum = cp.cumsum(safe_values)
+    cum_count = cp.cumsum(valid_mask.astype(cp.float64))
+
+    idx = cp.arange(n)
+    shifted_sum = cp.where(idx >= window, cum_sum[idx - window], 0.0)
+    shifted_count = cp.where(idx >= window, cum_count[idx - window], 0.0)
+
+    window_sum = cum_sum - shifted_sum
+    window_count = cum_count - shifted_count
+
+    result = cp.where(window_count > 0, window_sum / window_count, cp.nan)
 
     return cp.asnumpy(result).astype(np.float32)
 

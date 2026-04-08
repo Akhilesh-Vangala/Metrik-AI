@@ -49,7 +49,12 @@ def load_building_metadata(cfg: AppConfig) -> pd.DataFrame:
     logger.info("Loading building metadata from %s", path)
     meta = pd.read_csv(path, dtype=META_DTYPES)
     meta["primary_use"] = meta["primary_use"].astype("category")
-    meta["building_age"] = (2017 - meta["year_built"]).astype(np.float32)
+    reference_year = meta["year_built"].max()
+    if pd.notna(reference_year):
+        reference_year = int(reference_year) + 1
+    else:
+        reference_year = 2017
+    meta["building_age"] = (reference_year - meta["year_built"]).astype(np.float32)
     meta["log_square_feet"] = np.log1p(meta["square_feet"]).astype(np.float32)
     return meta
 

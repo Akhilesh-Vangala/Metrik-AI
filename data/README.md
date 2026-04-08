@@ -14,11 +14,14 @@ Or manually from [Kaggle](https://www.kaggle.com/competitions/ashrae-energy-pred
 
 ## Expected Files
 
-| File | Rows | Description |
-|------|------|-------------|
-| `train.csv` | ~53.6M | Hourly meter readings (building_id, meter, timestamp, meter_reading) |
-| `building_metadata.csv` | 1,636 | Building attributes (site_id, primary_use, square_feet, year_built) |
-| `weather_train.csv` | ~332K | Hourly weather per site (air_temperature, dew_temperature, etc.) |
+| File | Rows | Size | Description |
+|------|------|------|-------------|
+| `train.csv` | 20,216,100 | 647 MB | Hourly meter readings (building_id, meter, timestamp, meter_reading) |
+| `building_metadata.csv` | 1,449 | 44 KB | Building attributes (site_id, primary_use, square_feet, year_built) |
+| `weather_train.csv` | 139,773 | 7.1 MB | Hourly weather per site (air_temperature, dew_temperature, etc.) |
+| `test.csv` | 41,697,600 | 1.4 GB | Competition test set (no meter_reading — not used for training) |
+| `weather_test.csv` | ~277K | 14 MB | Weather for test period |
+| `sample_submission.csv` | 41,697,600 | 427 MB | Competition submission template |
 
 ## Kaggle API Setup
 

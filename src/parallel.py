@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import itertools
 import logging
+import multiprocessing
 import time
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -13,6 +14,8 @@ from src.config import AppConfig
 
 logger = logging.getLogger(__name__)
 
+_MP_CONTEXT = multiprocessing.get_context("spawn")
+
 
 def parallel_feature_build(
     site_ids: list[int],
@@ -23,7 +26,7 @@ def parallel_feature_build(
     t0 = time.perf_counter()
     results = []
 
-    with ProcessPoolExecutor(max_workers=n_workers) as executor:
+    with ProcessPoolExecutor(max_workers=n_workers, mp_context=_MP_CONTEXT) as executor:
         future_map = {executor.submit(build_fn, sid): sid for sid in site_ids}
         for future in as_completed(future_map):
             sid = future_map[future]
@@ -43,12 +46,13 @@ def parallel_model_training(
     site_ids: list[int],
     train_fn: Callable[[int], dict],
     n_workers: int = 4,
+    **kwargs,
 ) -> dict[int, dict]:
     logger.info("Parallel model training: %d sites, %d workers", len(site_ids), n_workers)
     t0 = time.perf_counter()
     results = {}
 
-    with ProcessPoolExecutor(max_workers=n_workers) as executor:
+    with ProcessPoolExecutor(max_workers=n_workers, mp_context=_MP_CONTEXT) as executor:
         future_map = {executor.submit(train_fn, sid): sid for sid in site_ids}
         for future in as_completed(future_map):
             sid = future_map[future]
