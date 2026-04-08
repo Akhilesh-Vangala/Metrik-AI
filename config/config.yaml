@@ -1,0 +1,45 @@
+paths:
+  data_dir: data
+  train_file: train.csv
+  building_meta_file: building_metadata.csv
+  weather_file: weather_train.csv
+  results_dir: results
+
+pipeline:
+  chunk_size: 2_000_000
+  seed: 42
+  validation_months: 3
+  target_col: meter_reading
+
+features:
+  lag_hours: [24, 168]
+  rolling_windows: [24, 168]
+  time_features: [hour, dayofweek, month, is_weekend]
+  use_holidays: true
+  dtype: float32
+
+model:
+  lgbm_params:
+    objective: regression
+    metric: rmse
+    num_leaves: 63
+    learning_rate: 0.05
+    feature_fraction: 0.8
+    bagging_fraction: 0.8
+    bagging_freq: 5
+    verbose: -1
+  num_boost_round: 1000
+  early_stopping_rounds: 50
+
+anomaly:
+  method: modified_zscore
+  threshold: 3.5
+  min_hours: 100
+
+parallel:
+  n_workers: 4
+  backend: process
+
+profiling:
+  enabled: true
+  output_dir: results/profiling
