@@ -24,7 +24,7 @@
   language=Python,
 }
 
-\graphicspath{{../results/plots/}{../results/eda/}}
+\graphicspath{{./}}
 
 \title{Metrik AI: Scalable Building Energy Forecasting,\\Anomaly Detection, and Decision Support}
 
@@ -161,7 +161,14 @@ Per-site model training is CPU-bound, so we use \texttt{ProcessPoolExecutor} wit
 
 We also built a \texttt{ThreadedResultCollector} class that uses the lower-level primitives: a \texttt{Queue} for task dispatch, a \texttt{Lock} for thread-safe writes to the shared results dictionary, and daemon \texttt{Thread} workers that pull from the queue until they receive a \texttt{None} sentinel. This is the classic producer--consumer pattern.
 
-Table~\ref{tab:parallel} shows parallel training times. The speedup tops out at 1.48$\times$ with 4 workers. This is expected---LightGBM itself is multi-threaded internally, so spawning 4 processes on a 4-core laptop means each process competes for the same cores. At 8 workers, things actually slow down a bit due to context switching.
+Table~\ref{tab:parallel} and Fig.~\ref{fig:parallel} show parallel training times. The speedup tops out at 1.48$\times$ with 4 workers. This is expected---LightGBM itself is multi-threaded internally, so spawning 4 processes on a 4-core laptop means each process competes for the same cores. At 8 workers, things actually slow down a bit due to context switching.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{parallel_speedup.png}
+\caption{Training time and speedup vs.\ number of workers.}
+\label{fig:parallel}
+\end{figure}
 
 \subsection{PySpark}
 
@@ -203,6 +210,24 @@ Fig.~\ref{fig:feature_importance} shows the top features by LightGBM split gain.
 \includegraphics[width=\columnwidth]{feature_importance.png}
 \caption{Top features by LightGBM split gain.}
 \label{fig:feature_importance}
+\end{figure}
+
+Fig.~\ref{fig:preds} plots predicted vs.\ actual consumption on the validation set. Points near the diagonal indicate accurate predictions; the model tracks well across the range but slightly underestimates the extreme high-consumption readings, which is expected given the outlier capping.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{predictions_vs_actual.png}
+\caption{Predicted vs.\ actual meter readings on the validation set.}
+\label{fig:preds}
+\end{figure}
+
+Fig.~\ref{fig:model_cmp} compares RMSE across the three models. The gap between the baselines and LightGBM is substantial.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{model_comparison.png}
+\caption{RMSE comparison: baseline mean, lag-24h, and LightGBM.}
+\label{fig:model_cmp}
 \end{figure}
 
 \subsection{Anomaly Detection}
