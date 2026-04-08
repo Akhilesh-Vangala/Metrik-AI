@@ -21,6 +21,7 @@ from src.model import (
 from src.anomaly import detect_anomalies, aggregate_anomalies
 from src.decision import build_audit_list, export_audit_list
 from src.benchmark import BenchmarkSuite, profile_function, measure_memory
+from src.eda import run_eda, plot_feature_importance, plot_predictions_vs_actual, plot_anomaly_distribution
 
 
 def setup_logging(verbose: bool = False):
@@ -123,6 +124,13 @@ def run(ctx, n_chunks: int | None, save_model_path: str):
         "feature_importance": lgbm_result.metadata.get("feature_importance", {}),
     }
     save_results(all_results, results_dir / "pipeline_results.json")
+
+    log.info("--- Stage 8: Generating Visualizations ---")
+    plots_dir = results_dir / "plots"
+    if lgbm_result.metadata.get("feature_importance"):
+        plot_feature_importance(lgbm_result.metadata["feature_importance"], plots_dir)
+    plot_predictions_vs_actual(val_df[cfg.pipeline.target_col].values, lgbm_result.predictions, plots_dir)
+    plot_anomaly_distribution(val_df, plots_dir)
 
     print(f"\n{'='*60}")
     print(f"  Metrik AI Pipeline Complete ({elapsed:.1f}s)")
@@ -325,6 +333,34 @@ def quality(ctx, n_chunks: int):
     report.to_csv(out, index=False)
     print(f"Quality report saved to {out}")
     print(report.to_string(index=False))
+
+
+@cli.command()
+@click.option("--n-chunks", type=int, default=3, help="Number of chunks to analyze")
+@click.pass_context
+def eda(ctx, n_chunks: int):
+    """Run exploratory data analysis and generate plots."""
+    cfg = ctx.obj["cfg"]
+    meta = load_building_metadata(cfg)
+    df = load_full_dataset(cfg, n_chunks=n_chunks)
+    output_dir = cfg.paths.results_path() / "eda"
+    summary = run_eda(df, meta, output_dir)
+
+    print(f"\n{'='*50}")
+    print("  EDA Summary")
+    print(f"{'='*50}")
+    ds = summary.get("dataset", {})
+    print(f"  Rows:       {ds.get('total_rows', 0):,}")
+    print(f"  Buildings:  {ds.get('n_buildings', 0)}")
+    print(f"  Sites:      {ds.get('n_sites', 0)}")
+    print(f"  Date range: {ds.get('date_range_start', '?')} to {ds.get('date_range_end', '?')}")
+    tp = summary.get("temporal_patterns", {})
+    print(f"  Peak hour:  {tp.get('peak_hour', '?')}")
+    print(f"  Weekday/Weekend ratio: {tp.get('weekday_vs_weekend_ratio', '?')}")
+    md = summary.get("missing_data", {})
+    print(f"  Zero readings: {md.get('meter_reading_zero_pct', '?')}%")
+    print(f"  Plots saved to: {output_dir}/")
+    print(f"{'='*50}\n")
 
 
 def main():

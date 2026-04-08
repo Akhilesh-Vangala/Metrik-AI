@@ -43,7 +43,10 @@ SITE0_KBTU_TO_KWH = 0.293071
 
 
 def load_building_metadata(cfg: AppConfig) -> pd.DataFrame:
+    """Load and enrich building metadata with derived features."""
     path = cfg.paths.meta_path()
+    if not path.exists():
+        raise FileNotFoundError(f"Building metadata not found at {path}. Run: python scripts/download_data.py")
     logger.info("Loading building metadata from %s", path)
     meta = pd.read_csv(path, dtype=META_DTYPES)
     meta["primary_use"] = meta["primary_use"].astype("category")
@@ -53,7 +56,10 @@ def load_building_metadata(cfg: AppConfig) -> pd.DataFrame:
 
 
 def load_weather(cfg: AppConfig) -> pd.DataFrame:
+    """Load weather data with per-site imputation for missing values."""
     path = cfg.paths.weather_path()
+    if not path.exists():
+        raise FileNotFoundError(f"Weather data not found at {path}. Run: python scripts/download_data.py")
     logger.info("Loading weather data from %s", path)
     weather = pd.read_csv(path, dtype=WEATHER_DTYPES, parse_dates=["timestamp"])
 
@@ -166,7 +172,15 @@ def stream_train_chunks(
     weather: pd.DataFrame,
     n_chunks: int | None = None,
 ) -> Generator[pd.DataFrame, None, None]:
+    """Stream training data in chunks, merging metadata and weather per chunk.
+
+    Yields cleaned DataFrames of size ~chunk_size. Each chunk has building
+    metadata and weather data joined. Uses itertools.islice for dev-mode
+    chunk limiting.
+    """
     path = cfg.paths.train_path()
+    if not path.exists():
+        raise FileNotFoundError(f"Training data not found at {path}. Run: python scripts/download_data.py")
     logger.info("Streaming %s in chunks of %d", path, cfg.pipeline.chunk_size)
 
     reader = pd.read_csv(
