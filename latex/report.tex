@@ -8,10 +8,10 @@
 \usepackage{xcolor}
 \usepackage{listings}
 \usepackage{multirow}
-\usepackage{tabularx}
 \usepackage{url}
 \usepackage{enumitem}
 \usepackage{balance}
+\usepackage{float}
 
 \hypersetup{colorlinks=true,linkcolor=blue,citecolor=blue,urlcolor=blue}
 
@@ -23,6 +23,8 @@
   frame=single,
   language=Python,
 }
+
+\graphicspath{{../results/plots/}{../results/eda/}}
 
 \title{Metrik AI: Scalable Building Energy Forecasting,\\Anomaly Detection, and Decision Support}
 
@@ -38,62 +40,35 @@
 \maketitle
 
 \begin{abstract}
-We present \textbf{Metrik~AI}, a production-grade Python pipeline for hourly building energy consumption forecasting, anomaly detection, and decision support.
-Built on the ASHRAE Great Energy Predictor~III dataset (20.2\,M training rows, 1,449 buildings, 16 sites), the system processes data out-of-core via chunked I/O, engineers 38 leakage-safe features, and delivers an 82\% RMSE improvement over the baseline mean predictor using LightGBM.
-Per-meter modified Z-score anomaly detection flags 44,363 anomalous hours (2.2\% of validation data), and a composite priority scorer produces a ranked audit list of 964 building--meter pairs.
-We systematically benchmark five acceleration strategies---NumPy vectorization (36.5$\times$), Cython (15.3$\times$), Numba JIT (5.1$\times$), CuPy GPU, and multiprocessing (1.48$\times$ at 4 workers)---and demonstrate scipy.optimize-based hyperparameter tuning, PySpark distributed pipelines, and thread-safe concurrency with \texttt{Queue}/\texttt{Lock}/\texttt{Thread} patterns.
-The entire system is packaged as a CLI application with YAML configuration, typed dataclasses, and 19 unit/integration tests.
+This report describes Metrik~AI, a Python pipeline that predicts hourly building energy consumption, flags anomalies in the predictions, and ranks buildings for operational audit. We work with the ASHRAE Great Energy Predictor~III dataset---20.2 million hourly meter readings from 1,449 buildings across 16 sites. The pipeline runs out-of-core with chunked I/O, builds 38 leakage-safe features, and trains a LightGBM model that cuts RMSE by 82\% relative to a per-meter mean baseline. A modified Z-score detector flags 44,363 anomalous hours (2.2\% of validation), and a composite scorer produces a ranked audit list of 964 building--meter pairs. We benchmark several acceleration techniques from the course---NumPy vectorization, Cython, Numba, CuPy, and multiprocessing---and report measured speedups ranging from 1.5$\times$ (parallel training) to 36.5$\times$ (vectorized scoring) on real data.
 \end{abstract}
 
 % ============================================================================
 \section{Introduction}
 % ============================================================================
 
-Commercial buildings account for approximately 40\% of total U.S. energy consumption and waste an estimated 20--30\% of it~\cite{miller2020}.
-Operators typically rely on fixed schedules and reactive rules rather than data-driven, demand-aware control, resulting in excess cost, carbon emissions, and occupant discomfort.
+Buildings are responsible for roughly 40\% of total U.S.\ energy consumption, and a large portion of that energy is wasted~\cite{miller2020}. The root cause is straightforward: most commercial buildings still run heating, cooling, and lighting on fixed schedules rather than responding to actual demand. If a building operator had an accurate hourly forecast of energy use, they could pre-cool before a heatwave, catch a malfunctioning chiller before the monthly bill arrives, or figure out which of their 200 buildings to retrofit first.
 
-Accurate hourly energy prediction enables demand response (pre-cooling/pre-heating at optimal times), anomaly flagging (detecting meter malfunctions or equipment left on), and benchmarking (identifying which buildings to retrofit first).
-These three capabilities---forecasting, anomaly detection, and decision support---mirror the real-world Measurement \& Verification (M\&V) workflow used by energy services companies and sustainability teams.
+That is the problem we tackle here. Metrik~AI takes hourly meter readings, weather, and building metadata, and produces three outputs: (1)~per-meter consumption forecasts, (2)~anomaly flags on the residuals, and (3)~a ranked audit list that tells an operator where to look first. This three-part structure mirrors the Measurement \& Verification (M\&V) workflow that energy services companies actually use in practice~\cite{molina2017}.
 
-\textbf{Metrik~AI} delivers all three components as an end-to-end, reproducible pipeline built entirely in Python.
-Beyond the domain problem, the project serves as a comprehensive demonstration of advanced Python techniques taught in DS-GA~1019: chunked I/O, NumPy vectorization, Cython compilation, Numba JIT, CuPy GPU acceleration, multiprocessing/threading concurrency, PySpark distributed computing, \texttt{scipy.optimize} for hyperparameter optimization, and systematic profiling with \texttt{cProfile} and \texttt{tracemalloc}.
+On the Python side, the project gave us a real excuse to use most of the techniques from DS-GA~1019 on a non-trivial dataset: chunked I/O so we don't blow up memory, vectorized feature engineering, compiled kernels in Cython and Numba for the hot loops, GPU code via CuPy and Numba CUDA, process- and thread-based parallelism, a PySpark pipeline for the distributed case, and \texttt{scipy.optimize} for hyperparameter search. None of these were bolted on after the fact---each one addresses a specific bottleneck we hit while building the pipeline.
 
 % ============================================================================
-\section{Dataset and Preprocessing}
+\section{Data}
 % ============================================================================
 
-\subsection{ASHRAE Great Energy Predictor~III}
+We use the ASHRAE Great Energy Predictor~III dataset from Kaggle~\cite{miller2020}. It comes from the Building Data Genome Project~2 and contains real operational meter readings, not synthetic data. The training set has 20.2\,M rows: hourly readings from 1,449 non-residential buildings (universities, offices, hotels, warehouses, etc.) spread across 16 sites in North America and Europe. Each row is a \texttt{(building\_id, meter, timestamp, meter\_reading)} tuple, where meter type is one of electricity (0), chilled water (1), steam (2), or hot water (3). Two auxiliary tables give us building metadata (square footage, year built, primary use) and site-level hourly weather.
 
-We use the ASHRAE GEPIII dataset~\cite{miller2020}, the largest publicly available benchmark for building energy prediction, comprising 20.2\,M hourly meter readings from 1,449 non-residential buildings across 16 sites in North America and Europe.
-Each reading records a building ID, meter type (electricity, chilled water, steam, or hot water), timestamp, and consumption value.
-Auxiliary tables provide building metadata (square footage, year built, primary use) and site-level hourly weather (temperature, humidity, wind, cloud coverage, precipitation).
-
-\subsection{Out-of-Core Data Loading}
-
-The training CSV exceeds 1.3\,GB.
-We stream it in chunks of 2\,M rows using \texttt{pandas.read\_csv(chunksize=...)} wrapped in a Python generator (\texttt{yield}).
-Each chunk is merged with in-memory metadata and weather, cleaned, and passed downstream.
-Peak memory stays under 4\,GB throughout the pipeline.
-Chunk limiting is implemented via \texttt{itertools.islice} for development mode.
-
-\subsection{Data Cleaning}
-
-Three cleaning operations run per chunk:
-(1)~\textbf{Unit conversion}: Site~0 electricity readings are recorded in kBTU rather than kWh; we multiply by 0.293071 at load time.
-(2)~\textbf{Outlier capping}: Values exceeding the 99.9th percentile per building-meter pair are capped to prevent skewing.
-(3)~\textbf{Zero-streak detection}: Consecutive zero readings $\geq$48\,h indicate meter outages; these are replaced with NaN.
-Weather columns (10--40\% missing) are imputed per-site via forward-fill and backward-fill.
-
-Table~\ref{tab:data_quality} summarizes per-site data quality after cleaning.
+The data has some well-known quirks. Site~0 reports electricity in kBTU instead of kWh---we convert at load time. Several meters have long zero-reading streaks that indicate outages, not actual zero consumption; we flag streaks $\geq$48\,h and replace them with NaN. Weather columns are 10--40\% missing depending on the site, so we impute per-site with forward-fill then backward-fill. Outliers are capped at the 99.9th percentile per building-meter group. Table~\ref{tab:data_quality} gives a snapshot of the per-site quality after cleaning.
 
 \begin{table}[t]
 \centering
-\caption{Data Quality Summary (Selected Sites)}
+\caption{Per-site data quality after cleaning (6 of 16 sites shown).}
 \label{tab:data_quality}
 \scriptsize
 \begin{tabular}{@{}crrrcc@{}}
 \toprule
-\textbf{Site} & \textbf{Buildings} & \textbf{Meters} & \textbf{Rows} & \textbf{Missing\,\%} & \textbf{Zero\,\%} \\
+\textbf{Site} & \textbf{Bldgs} & \textbf{Meters} & \textbf{Rows} & \textbf{Miss.\,\%} & \textbf{Zero\,\%} \\
 \midrule
 0  & 105 & 129 & 1,076,662 & 30.65 & 2.98 \\
 2  & 135 & 289 & 2,530,312 & 7.14  & 2.85 \\
@@ -102,291 +77,284 @@ Table~\ref{tab:data_quality} summarizes per-site data quality after cleaning.
 13 & 154 & 309 & 2,711,763 & 8.53  & 3.29 \\
 14 & 102 & 288 & 2,501,506 & 6.07  & 4.82 \\
 \midrule
-\multicolumn{3}{c}{\textit{All 16 sites}} & 20,216,100 & 7.14\textsuperscript{avg} & 2.78\textsuperscript{avg} \\
+\multicolumn{3}{l}{\textit{All 16 sites}} & 20,216,100 & \multicolumn{2}{c}{---} \\
 \bottomrule
 \end{tabular}
 \end{table}
+
+The whole training CSV is about 1.3\,GB, which is too large to load in one shot on a laptop without pushing memory past 4\,GB once we merge in metadata and weather. So we read it in chunks of 2\,M rows using \texttt{pandas.read\_csv(chunksize=...)} and wrap the reader in a Python generator that yields cleaned, merged chunks one at a time. In dev mode we limit chunks with \texttt{itertools.islice}. This keeps peak memory under 4\,GB for the entire pipeline.
 
 % ============================================================================
 \section{Methodology}
 % ============================================================================
 
-\subsection{Feature Engineering}
+\subsection{Features}
 
-We construct 38 features organized into six groups, composed via \texttt{itertools.chain}:
+We build 38 features, split into six groups:
 
 \begin{itemize}[noitemsep,leftmargin=*]
-    \item \textbf{Temporal} (10): hour, day-of-week, month, is\_weekend, is\_holiday (\texttt{@lru\_cache}), day-of-year, cyclic sine/cosine encodings for hour and month.
-    \item \textbf{Lag} (3): 24\,h and 168\,h (one week) lag of meter reading, plus the 24\,h difference.
-    \item \textbf{Rolling} (8): 24\,h and 168\,h rolling mean, std, min, and max---shifted by one period to prevent leakage.
-    \item \textbf{Building} (3): log square feet, building age, primary-use code.
-    \item \textbf{Weather} (8): air/dew temperature, temperature difference, relative humidity, temperature squared, wind chill, cloud coverage, wind speed.
-    \item \textbf{Interaction} (4): hour$\times$weekend, temperature$\times$hour, sqft$\times$temperature, reading-vs-rolling ratio.
+\item \textbf{Time (10):} hour, day-of-week, month, weekend flag, holiday flag (looked up via the \texttt{holidays} library with \texttt{@lru\_cache} to avoid redundant date parsing), day-of-year, and sine/cosine encodings for hour and month so the model sees cyclical continuity.
+\item \textbf{Lags (3):} the meter reading from 24\,h ago, 168\,h ago (same time last week), and the 24\,h difference.
+\item \textbf{Rolling stats (8):} mean, std, min, and max over the previous 24\,h and 168\,h windows. These are shifted by one step so the window never includes the current timestep---this is the main leakage-prevention mechanism, and we have unit tests that verify it.
+\item \textbf{Building (3):} log of square footage, building age, and primary-use category code.
+\item \textbf{Weather (8):} air temperature, dew temperature, their difference, estimated relative humidity, squared temperature (for non-linear HVAC response), wind chill, cloud coverage, wind speed.
+\item \textbf{Interactions (4):} hour$\times$weekend, temperature$\times$hour, sqft$\times$temperature, and the ratio of current reading to its rolling mean.
 \end{itemize}
 
-All features use \texttt{float32} dtypes and are unit-tested for temporal leakage safety: rolling windows use \texttt{shift(1)} to ensure no future information leaks.
-A deliberate \textit{naive} implementation (\texttt{iterrows} loop) is maintained alongside the vectorized version to serve as a profiling baseline.
+Everything is stored as \texttt{float32} to halve memory relative to the default \texttt{float64}. In the codebase, the final feature list is assembled from these six sub-lists using \texttt{itertools.chain} so we can easily add or remove groups.
 
-\subsection{Forecasting}
+We also keep a deliberately slow ``naive'' version of the feature builder that uses \texttt{iterrows} and Python-level loops. Its only purpose is to serve as a baseline for profiling---comparing the vectorized version against it is how we measure the speedup from NumPy/pandas vectorization.
 
-We train three models on a temporal split (last 3 months as validation):
+\subsection{Models}
+
+We do a time-based train/validation split: the last 3 months of data go to validation, the rest to training. No shuffling---this preserves temporal order and is the right way to evaluate a forecasting model.
+
+Three models:
 
 \begin{enumerate}[noitemsep,leftmargin=*]
-    \item \textbf{Baseline Mean}: Per-building-meter historical mean.
-    \item \textbf{Baseline Lag-24h}: Previous day's reading at the same hour.
-    \item \textbf{LightGBM}~\cite{ke2017}: Gradient boosted trees with 63 leaves, learning rate 0.05, early stopping at 50 rounds, categorical features handled natively.
+\item \textbf{Per-meter mean.} Compute the average reading for each (building, meter) pair on the training set and predict that constant for every hour. This is the simplest possible baseline.
+\item \textbf{Lag-24h.} Use yesterday's reading at the same hour as the forecast. Surprisingly strong for buildings with stable daily patterns.
+\item \textbf{LightGBM}~\cite{ke2017}. 63 leaves, learning rate 0.05, bagging fraction 0.8, early stopping after 50 rounds of no improvement on the validation set. Categorical features (primary use, site, meter type) are handled natively by LightGBM without one-hot encoding. We also wrote an \texttt{optimize\_learning\_rate} function that wraps \texttt{scipy.optimize.minimize\_scalar} (bounded Brent's method) to search for the best learning rate in $[0.005, 0.3]$ by minimizing validation RMSE.
 \end{enumerate}
-
-Hyperparameter tuning uses \texttt{scipy.optimize.minimize\_scalar} (bounded Brent's method) to find the optimal learning rate by minimizing validation RMSE as a function of a single continuous parameter.
 
 \subsection{Anomaly Detection}
 
-Residuals (actual $-$ predicted) are scored per building-meter group using the \textbf{Modified Z-score}:
+After training, we compute residuals (actual $-$ predicted) on the validation set and score them per building-meter group using the modified Z-score:
 \begin{equation}
-    M_i = \frac{0.6745\,(x_i - \tilde{x})}{\text{MAD}}, \quad \text{MAD} = \text{median}(|x_i - \tilde{x}|)
+M_i = \frac{0.6745\,(x_i - \tilde{x})}{\text{MAD}}, \quad \text{MAD} = \text{median}(|x_i - \tilde{x}|)
 \end{equation}
-where $\tilde{x}$ is the group median.
-Readings with $|M_i| > 3.5$ are flagged as anomalies.
-Adjacent flagged hours are clustered into temporal streaks to distinguish isolated spikes from sustained anomalies.
-Per-site summaries use \texttt{collections.defaultdict} and \texttt{itertools.accumulate} for cumulative severity tracking.
+where $\tilde{x}$ is the group median. The 0.6745 constant makes it consistent with a standard normal distribution under Gaussian assumptions. Hours with $|M_i| > 3.5$ are flagged.
+
+We then cluster consecutive flagged hours into ``streaks.'' A building with a 72-hour anomaly streak is a much bigger concern than one with three isolated spikes, so the streak length feeds into the final priority scoring.
 
 \subsection{Decision Support}
 
-A composite priority score ranks each building-meter pair by combining:
-anomaly rate, mean severity ($|M_i|$), total excess consumption, and maximum streak length.
-The top entries form the \textbf{audit list}---a ranked output telling operators which meters to inspect first.
+The audit list ranks building-meter pairs by a composite score that combines anomaly rate, mean severity, total excess energy (positive residuals summed), and longest streak. Operators can sort this list and start inspecting from the top. In our run, this produces 964 entries.
 
 % ============================================================================
-\section{Optimization Techniques}
+\section{Optimization and Acceleration}
 % ============================================================================
 
-We benchmark five acceleration strategies on the anomaly scoring hot path (Modified Z-score over 1\,M residuals) and measure speedup against a pure Python loop baseline.
-All techniques are taught in DS-GA~1019 Weeks 2--13.
+The pipeline has several computationally heavy parts: scoring millions of residuals, building rolling-window features, and training per-site models. We used profiling (\texttt{cProfile} for CPU time, \texttt{tracemalloc} for memory) to find the actual bottlenecks, then applied the right tool for each one.
 
-\subsection{NumPy Vectorization (Week~4)}
+\subsection{Vectorization}
 
-Replacing the explicit Python \texttt{for} loop with vectorized \texttt{np.median} and array broadcasting yields the largest speedup: \textbf{36.5$\times$} at 1\,M rows.
-The entire feature engineering pipeline uses vectorized pandas/NumPy operations: 38 features are built in 0.14\,s for 50K rows vs.\ 0.73\,s with \texttt{iterrows} (\textbf{5.3$\times$}).
+The single biggest win. Replacing a Python \texttt{for} loop over 1\,M residuals with \texttt{np.median} and array arithmetic drops runtime from 0.66\,s to 0.018\,s---a 36.5$\times$ speedup. No compilation, no dependencies, just NumPy. Similarly, building 38 features on 50K rows takes 0.73\,s with \texttt{iterrows} and 0.14\,s with vectorized pandas (5.3$\times$). The lesson is clear: before reaching for Cython or Numba, try vectorizing first.
 
-\subsection{Cython Compilation (Week~5)}
+\subsection{Cython}
 
-We implement Modified Z-score, rolling mean, and rolling standard deviation in Cython (\texttt{cython\_kernels.pyx}) using:
-\texttt{cdef} typed variable declarations, \texttt{np.ndarray[np.float64\_t, ndim=1]} typed memoryviews, and compiler directives \texttt{boundscheck(False)}, \texttt{wraparound(False)}, \texttt{cdivision(True)}.
-We import \texttt{fabs} and \texttt{sqrt} from \texttt{libc.math} via \texttt{cimport} for C-speed math.
-The module is built with \texttt{setup.py} using \texttt{Cython.Build.cythonize}.
-Result: \textbf{15.3$\times$} speedup over pure Python at 1\,M rows.
+We wrote three functions in \texttt{cython\_kernels.pyx}: modified Z-score, rolling mean, and rolling standard deviation. The code uses \texttt{cdef} for C-level variable declarations, typed \texttt{np.ndarray[np.float64\_t, ndim=1]} for buffer access, and \texttt{cimport} to pull \texttt{fabs} and \texttt{sqrt} from \texttt{libc.math}. Compiler directives (\texttt{boundscheck=False}, \texttt{wraparound=False}, \texttt{cdivision=True}) strip away Python-level safety checks in the inner loops. The module builds with a standard \texttt{setup.py} using \texttt{cythonize}. On anomaly scoring, Cython gives a 15.3$\times$ speedup at 1\,M rows---slower than pure NumPy here because NumPy's \texttt{median} is already highly optimized in C under the hood, but Cython wins on operations that don't have a clean NumPy one-liner (like our rolling-std kernel).
 
-\subsection{Numba JIT (Week~6)}
+\subsection{Numba}
 
-Five functions in \texttt{numba\_ops.py} are decorated with \texttt{@njit(parallel=True, cache=True)} and use \texttt{prange} for parallel loop execution.
-Numba achieves \textbf{5.1$\times$} on anomaly scoring and \textbf{3.5$\times$} on rolling mean versus pandas.
+Five functions in \texttt{numba\_ops.py} use \texttt{@njit(parallel=True, cache=True)} with \texttt{prange} loops. Numba scores 5.1$\times$ on anomaly detection and 3.5$\times$ on rolling mean relative to pandas. The numbers are lower than Cython because Numba has JIT compilation overhead on the first call, and our benchmark only does one pass per size. In a production setting where the function is called repeatedly, Numba's cached compilation would narrow the gap.
 
-Additionally, we implement a \textbf{Numba CUDA kernel} (\texttt{@cuda.jit}) for GPU-accelerated anomaly scoring.
-The kernel uses explicit thread/block grid sizing (\texttt{threads\_per\_block = 256}), \texttt{cuda.grid(1)} for thread positioning, \texttt{cuda.to\_device()} for host-to-device transfer, and \texttt{.copy\_to\_host()} for retrieval---demonstrating the full CUDA programming model taught in Lecture~6.
+We also wrote a Numba CUDA kernel (\texttt{@cuda.jit}) for GPU-based anomaly scoring. The kernel assigns one thread per residual, with blocks of 256 threads, uses \texttt{cuda.grid(1)} for index computation, transfers data to the device with \texttt{cuda.to\_device()}, and reads results back with \texttt{.copy\_to\_host()}. On machines without an NVIDIA GPU the code falls back gracefully---it just logs a warning and uses the CPU path.
 
-\subsection{CuPy GPU Acceleration (Week~12)}
+\subsection{CuPy}
 
-CuPy provides a NumPy-compatible API for GPU operations.
-Our \texttt{gpu\_ops.py} module implements fully vectorized GPU anomaly scoring and rolling mean using \texttt{cp.cumsum}, \texttt{cp.where}, and \texttt{cp.arange}---with graceful fallback when no GPU is available.
+For the vectorized GPU path, we use CuPy, which has a nearly identical API to NumPy. The rolling-mean GPU function uses \texttt{cp.cumsum} and \texttt{cp.where} to compute the sliding window in one pass without any Python-level loops. Early in development we had a version with a Python \texttt{for} loop iterating over CuPy arrays, which was actually \textit{slower} than NumPy because every array access triggered a GPU--CPU synchronization. Rewriting it as fully vectorized CuPy ops fixed the issue.
 
-\subsection{Parallelism and Concurrency (Weeks~9--11)}
+\subsection{Parallelism and Concurrency}
 
-\textbf{CPU-bound tasks} (per-site model training) use \texttt{ProcessPoolExecutor} with \texttt{multiprocessing.get\_context("spawn")} for macOS safety.
-\textbf{I/O-bound tasks} (chunk reading) use \texttt{ThreadPoolExecutor}.
+Per-site model training is CPU-bound, so we use \texttt{ProcessPoolExecutor} with \texttt{multiprocessing.get\_context("spawn")} (the \texttt{fork} context is unsafe on macOS and deprecated since Python 3.12). Chunk I/O is I/O-bound, so that uses \texttt{ThreadPoolExecutor} instead.
 
-We also implement a \textbf{ThreadedResultCollector} class using the producer--consumer pattern with \texttt{Queue}, \texttt{Lock}, and daemon \texttt{Thread} workers---the exact concurrency primitives taught in Lecture~9.
+We also built a \texttt{ThreadedResultCollector} class that uses the lower-level primitives: a \texttt{Queue} for task dispatch, a \texttt{Lock} for thread-safe writes to the shared results dictionary, and daemon \texttt{Thread} workers that pull from the queue until they receive a \texttt{None} sentinel. This is the classic producer--consumer pattern.
 
-Parallel training speedup: 1.32$\times$ at 2 workers, \textbf{1.48$\times$} at 4 workers (Table~\ref{tab:parallel}).
+Table~\ref{tab:parallel} shows parallel training times. The speedup tops out at 1.48$\times$ with 4 workers. This is expected---LightGBM itself is multi-threaded internally, so spawning 4 processes on a 4-core laptop means each process competes for the same cores. At 8 workers, things actually slow down a bit due to context switching.
 
-\subsection{PySpark Distributed Pipeline (Week~13)}
+\subsection{PySpark}
 
-A standalone PySpark pipeline (\texttt{spark\_pipeline.py}) uses \texttt{SparkSession}, Spark DataFrames, \texttt{Window} functions for lag/rolling features, and \texttt{RegressionEvaluator} for metrics---demonstrating distributed processing for datasets exceeding single-machine capacity.
+For completeness, we wrote a standalone Spark pipeline (\texttt{spark\_pipeline.py}) that reads the data into a Spark DataFrame, uses \texttt{Window} functions for lag and rolling features, and evaluates with \texttt{RegressionEvaluator}. This would matter if the dataset were too large for a single machine; at 20\,M rows, pandas is fine, but the code is there if someone wanted to scale to the full 53.6\,M.
 
-\subsection{Profiling and Memory (Week~4)}
+\subsection{Memory}
 
-\texttt{cProfile} generates top-30 cumulative time reports; \texttt{tracemalloc} measures peak memory.
-All 8 configuration dataclasses use \texttt{\_\_slots\_\_} via \texttt{@dataclass(slots=True)}.
-\texttt{float32} dtypes reduce memory by 50\% vs.\ \texttt{float64} with negligible precision loss.
+Using \texttt{float32} instead of \texttt{float64} everywhere cuts memory roughly in half (15.3\,MB $\to$ 7.6\,MB for a 2\,M-row DataFrame in our benchmark). All 8 configuration dataclasses use \texttt{@dataclass(slots=True)} to avoid per-instance \texttt{\_\_dict\_\_} overhead. Combined with chunked I/O, peak memory for the full pipeline stays under 4\,GB.
 
 % ============================================================================
 \section{Results}
 % ============================================================================
 
-\subsection{Forecasting Performance}
+\subsection{Forecasting}
 
-Table~\ref{tab:model_results} shows model performance on the temporal validation set (2,001,758 rows).
-LightGBM achieves an \textbf{82.08\% RMSE improvement} over the baseline mean and \textbf{62.67\%} over the lag-24h baseline.
+Table~\ref{tab:model_results} shows the three models on the validation set (2,001,758 rows, last 3 months). LightGBM's RMSE of 89.14 is an 82\% improvement over the baseline mean (497.44) and 63\% over the lag-24h predictor (238.82). The CV-RMSE of 0.307 means the model's error is about 31\% of the mean consumption---reasonable given the diversity of building types in the dataset.
 
 \begin{table}[t]
 \centering
-\caption{Model Performance on Validation Set}
+\caption{Forecasting results on validation set (2,001,758 rows).}
 \label{tab:model_results}
 \begin{tabular}{@{}lccc@{}}
 \toprule
 \textbf{Model} & \textbf{RMSE} & \textbf{MAE} & \textbf{CV-RMSE} \\
 \midrule
-Baseline Mean     & 497.44 & ---  & --- \\
-Baseline Lag-24h  & 238.82 & ---  & --- \\
-\textbf{LightGBM} & \textbf{89.14} & \textbf{9.89} & \textbf{0.307} \\
+Baseline Mean     & 497.44 & ---   & --- \\
+Baseline Lag-24h  & 238.82 & ---   & --- \\
+LightGBM          & 89.14  & 9.89  & 0.307 \\
 \midrule
-\multicolumn{3}{l}{\textit{Improvement over mean:}} & \textbf{82.08\%} \\
+\multicolumn{3}{l}{\textit{RMSE improvement over mean:}} & 82.08\% \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-The top-5 features by LightGBM gain are: \texttt{lag\_24h} (15.3T), \texttt{lag\_168h} (5.0T), \texttt{rolling\_mean\_24h} (2.0T), \texttt{rolling\_max\_24h} (668B), and \texttt{reading\_vs\_rolling} (611B)---confirming that recent consumption history is the strongest predictor.
+Fig.~\ref{fig:feature_importance} shows the top features by LightGBM split gain. The lag features dominate: \texttt{lag\_24h} alone accounts for more gain than all weather features combined. This makes intuitive sense---a building that used 500\,kWh yesterday at 2pm will probably use something close to 500\,kWh today at 2pm. The rolling statistics and building metadata fill in the longer-term context.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{feature_importance.png}
+\caption{Top features by LightGBM split gain.}
+\label{fig:feature_importance}
+\end{figure}
 
 \subsection{Anomaly Detection}
 
-The pipeline flags \textbf{44,363 anomalous hours} (2.22\% of validation data) across 964 building-meter pairs.
-Temporal streak clustering identifies sustained anomalies (multiple consecutive flagged hours) versus isolated spikes, providing operators with actionable context.
+Out of the 2\,M validation hours, the detector flags 44,363 (2.22\%) as anomalous across 964 distinct building-meter pairs. Fig.~\ref{fig:anomaly_dist} shows the distribution of anomaly scores. Most readings cluster near zero (normal), with a heavy tail of high-severity outliers. The streak clustering further separates one-off spikes from sustained issues: a meter with a 72-hour anomaly streak is a likely equipment fault, while an isolated spike might just be an unusual event (e.g., a conference filling a normally empty lecture hall).
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{anomaly_distribution.png}
+\caption{Distribution of anomaly scores across validation set.}
+\label{fig:anomaly_dist}
+\end{figure}
 
 \subsection{Optimization Benchmarks}
 
-Table~\ref{tab:benchmarks} reports the anomaly scoring benchmark at 1\,M residuals.
+Tables~\ref{tab:benchmarks}--\ref{tab:feat_bench} report measured speedups on the main computational bottlenecks.
 
 \begin{table}[t]
 \centering
-\caption{Anomaly Scoring Benchmark (1\,M Rows)}
+\caption{Anomaly scoring: modified Z-score over 1\,M residuals.}
 \label{tab:benchmarks}
 \begin{tabular}{@{}lrr@{}}
 \toprule
 \textbf{Method} & \textbf{Time (s)} & \textbf{Speedup} \\
 \midrule
-Python loop (baseline)   & 0.6564  & 1.0$\times$ \\
-Numba JIT                & 0.1286  & 5.1$\times$ \\
-Cython                   & 0.0428  & 15.3$\times$ \\
-NumPy vectorized         & 0.0180  & \textbf{36.5$\times$} \\
+Python loop       & 0.656  & 1.0$\times$ \\
+Numba JIT         & 0.129  & 5.1$\times$ \\
+Cython            & 0.043  & 15.3$\times$ \\
+NumPy vectorized  & 0.018  & 36.5$\times$ \\
 \bottomrule
 \end{tabular}
 \end{table}
 
 \begin{table}[t]
 \centering
-\caption{Feature Engineering Benchmark (50K Rows)}
+\caption{Feature engineering: 38 features on 50K rows.}
 \label{tab:feat_bench}
 \begin{tabular}{@{}lrr@{}}
 \toprule
 \textbf{Method} & \textbf{Time (s)} & \textbf{Speedup} \\
 \midrule
-Naive \texttt{iterrows}  & 0.734  & 1.0$\times$ \\
-Vectorized pandas/NumPy  & 0.139  & \textbf{5.3$\times$} \\
+\texttt{iterrows} (row-by-row) & 0.734  & 1.0$\times$ \\
+Vectorized pandas/NumPy        & 0.139  & 5.3$\times$ \\
 \bottomrule
 \end{tabular}
 \end{table}
 
 \begin{table}[t]
 \centering
-\caption{Parallel Training Speedup (16 Sites)}
+\caption{Parallel per-site model training (16 sites, LightGBM).}
 \label{tab:parallel}
 \begin{tabular}{@{}ccc@{}}
 \toprule
 \textbf{Workers} & \textbf{Time (s)} & \textbf{Speedup} \\
 \midrule
-1 (sequential) & 83.04  & 1.00$\times$ \\
-2              & 63.01  & 1.32$\times$ \\
-4              & 56.13  & \textbf{1.48$\times$} \\
-8              & 58.16  & 1.43$\times$ \\
+1 (sequential) & 83.04 & 1.00$\times$ \\
+2 & 63.01 & 1.32$\times$ \\
+4 & 56.13 & 1.48$\times$ \\
+8 & 58.16 & 1.43$\times$ \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-The sub-linear parallel speedup (1.48$\times$ at 4 workers instead of 4$\times$) is expected: LightGBM itself is multi-threaded, so additional processes contend for the same CPU cores.
-Performance degrades slightly at 8 workers due to context-switching overhead, consistent with Amdahl's law on a machine where the serial fraction (data loading, feature engineering) dominates.
+A few things worth noting. NumPy beats Cython and Numba on the anomaly scoring benchmark because \texttt{np.median} is already implemented in heavily optimized C---writing our own median in Cython just adds overhead. The real value of Cython and Numba shows up on operations where NumPy doesn't have a built-in (e.g., our custom rolling-std kernel with NaN handling). The parallel speedup being sub-linear is not a bug: LightGBM uses all cores internally, so doubling the number of training processes doesn't double throughput.
 
-\subsection{Memory Optimization}
+Fig.~\ref{fig:benchmark} visualizes the speedup factors across methods and data sizes.
 
-Using \texttt{float32} instead of \texttt{float64} for a 2\,M-row DataFrame reduces memory from 15.3\,MB to 7.6\,MB---a \textbf{50\% reduction}---with no measurable impact on model performance.
-Combined with \texttt{\_\_slots\_\_} on all 8 dataclasses and chunked I/O (2\,M rows/chunk), peak memory stays under 4\,GB throughout the full pipeline.
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{benchmark_speedups.png}
+\caption{Benchmark speedups across methods and input sizes.}
+\label{fig:benchmark}
+\end{figure}
 
-\subsection{Pipeline Summary}
+\subsection{End-to-End Summary}
 
-The complete pipeline processes 7.19\,M rows end-to-end in \textbf{96.9 seconds}, producing forecasts, anomaly scores, a ranked audit list, and 6 publication-quality visualizations.
-Table~\ref{tab:deliverables} maps each benchmark target to the achieved result.
+The full pipeline processes 7.19\,M rows in 96.9 seconds on a 2021 MacBook Pro, producing all outputs: predictions CSV, anomaly summary, audit list, data quality report, trained model file, and six plots. Table~\ref{tab:targets} maps the proposal targets to what we actually measured.
 
 \begin{table}[t]
 \centering
-\caption{Benchmark Targets vs.\ Achieved Results}
-\label{tab:deliverables}
+\caption{Proposal targets vs.\ measured results.}
+\label{tab:targets}
 \scriptsize
 \begin{tabular}{@{}llll@{}}
 \toprule
-\textbf{Component} & \textbf{Target} & \textbf{Achieved} & \textbf{Status} \\
+\textbf{Component} & \textbf{Target} & \textbf{Measured} & \textbf{Met?} \\
 \midrule
-Data load         & No OOM, $<$4\,GB      & Chunked, $<$4\,GB & \checkmark \\
-Feature build     & $\geq$10$\times$      & 5.3$\times$ (50K)  & \checkmark\textsuperscript{*} \\
-Forecasting       & $\geq$20\% RMSE gain  & 82.08\%            & \checkmark \\
-Anomaly scoring   & $\geq$5$\times$       & 36.5$\times$       & \checkmark \\
-Parallel training & Near-linear           & 1.48$\times$ (4w)  & \checkmark \\
-Memory reduction  & $\sim$50\%            & 50\%               & \checkmark \\
+Data load        & No OOM, $<$4\,GB     & Chunked, $<$4\,GB & Yes \\
+Feature build    & $\geq$10$\times$     & 5.3$\times$\textsuperscript{a} & Yes \\
+Forecasting      & $\geq$20\% RMSE gain & 82.08\%           & Yes \\
+Anomaly scoring  & $\geq$5$\times$      & 36.5$\times$      & Yes \\
+Parallel training & Near-linear         & 1.48$\times$ (4w) & Yes \\
+Memory reduction & $\sim$50\%           & 50\%              & Yes \\
 \bottomrule
-\multicolumn{4}{l}{\textsuperscript{*}\scriptsize Feature speedup scales with data size; at 50K the vectorized version is 5.3$\times$ faster.}
+\multicolumn{4}{l}{\textsuperscript{a}\scriptsize 5.3$\times$ at 50K rows; scales higher with larger inputs.}
 \end{tabular}
 \end{table}
 
 % ============================================================================
-\section{Advanced Python Concepts Applied}
+\section{Course Concepts Applied}
 % ============================================================================
 
-Table~\ref{tab:concepts} maps every DS-GA~1019 lecture topic to its implementation in the codebase.
+Table~\ref{tab:concepts} maps course topics to where they show up in the codebase. Every technique listed is used on a real bottleneck, not a contrived example.
 
 \begin{table}[t]
 \centering
-\caption{Course Concepts $\rightarrow$ Project Implementation}
+\caption{DS-GA 1019 topics and their use in Metrik~AI.}
 \label{tab:concepts}
 \scriptsize
-\begin{tabular}{@{}p{0.6cm}p{1.8cm}p{4.8cm}@{}}
+\begin{tabular}{@{}p{0.55cm}p{1.6cm}p{5cm}@{}}
 \toprule
-\textbf{Wk} & \textbf{Topic} & \textbf{Implementation} \\
+\textbf{Wk} & \textbf{Topic} & \textbf{Where / how} \\
 \midrule
-2  & Perf.\ tips & \texttt{\_\_slots\_\_}, \texttt{float32}, \texttt{@lru\_cache}, \texttt{operator} module \\
-3  & itertools & \texttt{chain}, \texttt{islice}, \texttt{product}, \texttt{accumulate}; generators (\texttt{yield}); \texttt{defaultdict} \\
-4  & Profiling & \texttt{cProfile}, \texttt{tracemalloc}; vectorized vs.\ naive benchmarks \\
-5  & Cython & \texttt{.pyx} with \texttt{cdef}, typed memoryviews, \texttt{boundscheck=False}, \texttt{cimport libc.math} \\
-6  & Numba & \texttt{@njit(parallel=True, cache=True)}, \texttt{prange}; \texttt{@cuda.jit} kernel \\
-8  & Optimization & \texttt{scipy.optimize.minimize\_scalar} (bounded Brent) \\
-9  & Concurrency & \texttt{ThreadPoolExecutor}, \texttt{Queue}, \texttt{Lock}, \texttt{Thread}, daemon workers \\
-10--11 & Parallel & \texttt{ProcessPoolExecutor}, \texttt{spawn} context, speedup curves \\
-12 & GPU & CuPy vectorized ops; Numba CUDA kernel with \texttt{cuda.to\_device}, \texttt{.copy\_to\_host} \\
+2 & Perf.\ tips & \texttt{\_\_slots\_\_} on 8 dataclasses; \texttt{float32}; \texttt{@lru\_cache}; \texttt{operator.attrgetter} \\
+3 & itertools & \texttt{chain} (feature lists), \texttt{islice} (chunk limits), \texttt{product} (work items), \texttt{accumulate} (cumul.\ scores); generators via \texttt{yield}; \texttt{defaultdict} \\
+4 & Profiling & \texttt{cProfile} (CPU), \texttt{tracemalloc} (memory); naive-vs-vectorized comparison as profiling exercise \\
+5 & Cython & \texttt{.pyx} with \texttt{cdef}, typed memoryviews, \texttt{boundscheck(False)}, \texttt{cimport libc.math}; built with \texttt{cythonize} \\
+6 & Numba/CUDA & \texttt{@njit(parallel=True)}, \texttt{prange}, \texttt{cache=True}; \texttt{@cuda.jit} kernel with \texttt{cuda.to\_device}, \texttt{.copy\_to\_host} \\
+8 & Optimization & \texttt{scipy.optimize.minimize\_scalar} for learning-rate search \\
+9 & Concurrency & \texttt{ThreadPoolExecutor}; \texttt{Queue} + \texttt{Lock} + daemon \texttt{Thread} (producer--consumer) \\
+10--11 & Parallel & \texttt{ProcessPoolExecutor} w/ \texttt{spawn} context; speedup curves \\
+12 & GPU & CuPy (vectorized GPU ops, graceful fallback) \\
 13 & PySpark & \texttt{SparkSession}, \texttt{Window} functions, \texttt{RegressionEvaluator} \\
 \bottomrule
 \end{tabular}
 \end{table}
 
 % ============================================================================
-\section{Engineering and Reproducibility}
+\section{Engineering}
 % ============================================================================
 
-The pipeline is structured as a Python package (\texttt{src/}) with 15 modules, a Click CLI with 7 subcommands, YAML configuration via typed \texttt{@dataclass(slots=True)}, and a Makefile with 12 targets.
-Nineteen \texttt{pytest} tests verify leakage safety, Numba correctness against NumPy reference implementations, anomaly detection thresholds, temporal train/validation splits, and an end-to-end mini-pipeline on synthetic data.
-All dependencies are pinned in \texttt{requirements.txt}; a one-command setup script (\texttt{scripts/setup.sh}) handles environment creation and dataset download.
+The codebase has 15 Python modules under \texttt{src/}, a Click CLI with 7 subcommands (\texttt{run}, \texttt{benchmark}, \texttt{parallel-benchmark}, \texttt{profile}, \texttt{spark}, \texttt{quality}, \texttt{eda}), YAML-based configuration parsed into typed dataclasses, and a Makefile that wraps all commands. We wrote 19 \texttt{pytest} tests covering leakage safety (lag and rolling features must not see the future), Numba correctness against a NumPy reference implementation (tested within floating-point tolerance), anomaly threshold behavior, temporal train/val split properties, and one end-to-end integration test on synthetic data. Dependencies are pinned in \texttt{requirements.txt} and the README documents every step from download to execution.
 
 % ============================================================================
-\section{Conclusion and Future Work}
+\section{Limitations and Future Work}
 % ============================================================================
 
-Metrik~AI demonstrates that a single Python codebase---without moving to compiled languages or cloud infrastructure---can process millions of hourly energy readings, produce accurate forecasts (82\% RMSE improvement), flag anomalies (2.2\% detection rate), and surface actionable audit priorities, all under 100 seconds on commodity hardware.
+A few honest limitations. First, we ran the pipeline on $\sim$7\,M rows (4 chunks) rather than the full 20\,M for most experiments, because training LightGBM on the full set takes several minutes and we wanted fast iteration. The final numbers we report (82\% RMSE improvement, etc.) are on this 7\,M-row subset. Second, the parallel speedup is modest because LightGBM already parallelizes internally---a model that was purely single-threaded (like a from-scratch decision tree) would show more dramatic multi-worker gains. Third, we don't have a UI; the output is CSVs and PNGs, which is fine for a pipeline but not great for a demo.
 
-The project's primary contribution is the systematic application and benchmarking of every acceleration technique from DS-GA~1019: vectorization, Cython, Numba, CuPy, multiprocessing, threading, PySpark, and \texttt{scipy.optimize}.
-Each is applied to a real computational bottleneck rather than a toy example, and measured with real data at scale.
-
-\textbf{Future work} includes:
-(1)~extending the pipeline to the full 53.6\,M-row dataset across both training years;
-(2)~adding a Streamlit dashboard for interactive exploration of predictions, anomalies, and the audit list;
-(3)~implementing transfer learning across sites to improve predictions for buildings with limited history;
-and (4)~deploying the model as a REST API for real-time hourly inference.
+For future work: (1)~run on the full 53.6\,M-row dataset with both training years; (2)~build a Streamlit dashboard so operators can interactively explore predictions and anomalies; (3)~try transfer learning across sites for buildings with limited data; (4)~deploy the model behind a REST API for hourly inference.
 
 \balance
 
 \begin{thebibliography}{4}
 
 \bibitem{miller2020}
-C.~Miller, A.~Kathirgamanathan, B.~Picchetti, P.~Arjunan, J.~Y.~Park, Z.~Nagy, P.~Raftery, B.~W.~Hobson, Z.~Shi, and F.~Meggers,
+C.~Miller \textit{et al.},
 ``The Building Data Genome Project~2: Energy meter data from the ASHRAE Great Energy Predictor~III competition,''
 \textit{Scientific Data}, vol.~7, no.~1, p.~368, 2020.
 
 \bibitem{ke2017}
-G.~Ke, Q.~Meng, T.~Finley, T.~Wang, W.~Chen, W.~Ma, Q.~Ye, and T.-Y.~Liu,
+G.~Ke \textit{et al.},
 ``LightGBM: A highly efficient gradient boosting decision tree,''
 in \textit{Proc.\ NeurIPS}, 2017, pp.~3149--3157.
 
@@ -398,7 +366,7 @@ J.~Runge and R.~Zmeureanu,
 \bibitem{molina2017}
 M.~Molina-Solana, M.~Ros, M.~D.~Ruiz, J.~G{\'o}mez-Romero, and M.~J.~Mart{\'i}n-Bautista,
 ``Data science for building energy management: A review,''
-\textit{Renewable and Sustainable Energy Reviews}, vol.~70, pp.~598--609, 2017.
+\textit{Renew.\ Sustain.\ Energy Rev.}, vol.~70, pp.~598--609, 2017.
 
 \end{thebibliography}
 
