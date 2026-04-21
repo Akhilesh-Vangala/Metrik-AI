@@ -1,0 +1,76 @@
+{
+  "dataset": {
+    "total_rows": 20216100,
+    "n_buildings": 1449,
+    "n_sites": 16,
+    "n_meters": 2380,
+    "date_range_start": "2016-01-01 00:00:00",
+    "date_range_end": "2016-12-31 23:00:00",
+    "memory_mb": 1475.8,
+    "meters_per_type": {
+      "Electricity": 1413,
+      "Chilled Water": 498,
+      "Steam": 324,
+      "Hot Water": 145
+    }
+  },
+  "meter_distributions": {
+    "Electricity": {
+      "count": 12060910,
+      "mean": 164.97,
+      "median": 63.95,
+      "std": 365.89,
+      "max": 19511.0,
+      "pct_zero": 0.59
+    },
+    "Chilled Water": {
+      "count": 4182440,
+      "mean": 712.47,
+      "median": 168.42,
+      "std": 8448.69,
+      "max": 820834.44,
+      "pct_zero": 4.46
+    },
+    "Steam": {
+      "count": 2708713,
+      "mean": 14716.16,
+      "median": 298.9,
+      "std": 430530.44,
+      "max": 21513794.0,
+      "pct_zero": 7.13
+    },
+    "Hot Water": {
+      "count": 1264037,
+      "mean": 463.87,
+      "median": 74.05,
+      "std": 2731.96,
+      "max": 110517.96,
+      "pct_zero": 10.04
+    }
+  },
+  "temporal_patterns": {
+    "peak_hour": 15,
+    "trough_hour": 5,
+    "weekday_vs_weekend_ratio": 1.2
+  },
+  "missing_data": {
+    "weather_missing_pct": {
+      "air_temperature": 0.45,
+      "dew_temperature": 0.45,
+      "cloud_coverage": 0.45,
+      "precip_depth_1_hr": 0.45,
+      "sea_level_pressure": 4.3,
+      "wind_direction": 0.45,
+      "wind_speed": 0.45
+    },
+    "meter_reading_zero_pct": 2.86,
+    "meter_reading_na_pct": 6.41
+  },
+  "weather_correlation": {
+    "temp_meter_corr": -0.005
+  },
+  "site_comparison": {
+    "highest_consumption_site": 13,
+    "most_buildings_site": 3
+  }
+}

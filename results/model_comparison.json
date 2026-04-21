@@ -1,0 +1,16 @@
+{
+  "baseline_mean_rmse": 497.44302437565653,
+  "baseline_lag24_rmse": 238.81528066949568,
+  "xgboost_rmse": 184.87300328536344,
+  "xgboost_cv_rmse": 0.6364811315327045,
+  "xgboost_mae": 41.558685302734375,
+  "xgboost_train_time": 25.4,
+  "lightgbm_rmse": 183.94894629692772,
+  "lightgbm_cv_rmse": 0.6332997863544015,
+  "lightgbm_mae": 41.3154411315918,
+  "lightgbm_train_time": 45.6,
+  "lightgbm_speedup_vs_xgboost": 0.56,
+  "rows_processed": 7191724,
+  "train_rows": 5189966,
+  "val_rows": 2001758
+}
