@@ -7,7 +7,9 @@ Building energy consumption forecasting on the [ASHRAE Great Energy Predictor II
 
 ## Results
 
-- LightGBM RMSE: **183.9** (63% better than the lag-24h baseline at 238.8)
+- LightGBM RMSE: **183.9**
+  - 63% lower than the meter-mean baseline (497.4) — exceeds the proposal's 20–40% target
+  - 23% lower than the lag-24h persistence baseline (238.8)
 - XGBoost RMSE: 184.9
 - 68,504 anomalies flagged in the validation set
 - 964 buildings in the audit list
