@@ -15,10 +15,46 @@ logger = logging.getLogger(__name__)
 
 US_HOLIDAYS = holidays.US()
 
+SITE_COUNTRY = {
+    0: "US", 1: "UK", 2: "US", 3: "US", 4: "US", 5: "UK",
+    6: "US", 7: "CA", 8: "US", 9: "US", 10: "US", 11: "CA",
+    12: "IE", 13: "US", 14: "US", 15: "US",
+}
+
 
 @lru_cache(maxsize=1024)
 def _is_holiday(date: str) -> bool:
     return date in US_HOLIDAYS
+
+
+@lru_cache(maxsize=64)
+def _country_holiday_set(country: str, year: int) -> frozenset:
+    cal = holidays.country_holidays(country, years=[year])
+    return frozenset(d.isoformat() for d in cal.keys())
+
+
+def _compute_is_holiday(df: pd.DataFrame, ts: pd.DatetimeIndex) -> np.ndarray:
+    date_strs = ts.strftime("%Y-%m-%d").to_numpy()
+    years = sorted({int(y) for y in ts.year.unique()})
+    out = np.zeros(len(df), dtype=np.int8)
+
+    if "site_id" not in df.columns:
+        us_set: set = set()
+        for y in years:
+            us_set |= _country_holiday_set("US", y)
+        out[:] = np.fromiter((d in us_set for d in date_strs), dtype=np.int8, count=len(date_strs))
+        return out
+
+    site_ids = df["site_id"].to_numpy()
+    countries = np.array([SITE_COUNTRY.get(int(s), "US") for s in site_ids])
+    for country in np.unique(countries):
+        mask = countries == country
+        country_set: set = set()
+        for y in years:
+            country_set |= _country_holiday_set(country, y)
+        sub_dates = date_strs[mask]
+        out[mask] = np.fromiter((d in country_set for d in sub_dates), dtype=np.int8, count=len(sub_dates))
+    return out
 
 
 def add_time_features(df: pd.DataFrame) -> pd.DataFrame:
@@ -29,8 +65,7 @@ def add_time_features(df: pd.DataFrame) -> pd.DataFrame:
     df["is_weekend"] = (ts.dayofweek >= 5).astype(np.int8)
     df["day_of_year"] = ts.dayofyear.astype(np.int16)
 
-    date_strs = ts.strftime("%Y-%m-%d")
-    df["is_holiday"] = np.array([_is_holiday(d) for d in date_strs], dtype=np.int8)
+    df["is_holiday"] = _compute_is_holiday(df, ts)
 
     df["hour_sin"] = np.sin(2 * np.pi * df["hour"] / 24).astype(np.float32)
     df["hour_cos"] = np.cos(2 * np.pi * df["hour"] / 24).astype(np.float32)

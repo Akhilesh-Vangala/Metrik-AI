@@ -351,6 +351,85 @@ def spark(ctx):
     print(f"Spark pipeline: {result['rows']:,} rows in {result['elapsed_seconds']:.1f}s")
 
 
+@cli.command("spark-benchmark")
+@click.option("--n-chunks", type=int, default=2, help="Chunks of train.csv to use (each chunk = config.pipeline.chunk_size rows)")
+@click.pass_context
+def spark_benchmark(ctx, n_chunks: int):
+    """Benchmark PySpark vs pandas on the same load + time/lag/rolling feature pipeline.
+
+    Writes results/spark_benchmark.csv with one row per engine.
+    """
+    from src.spark_pipeline import (
+        SPARK_AVAILABLE, get_spark_session, load_train_spark,
+        add_time_features_spark, add_lag_features_spark, add_rolling_features_spark,
+    )
+
+    cfg = ctx.obj["cfg"]
+    output_dir = Path(cfg.paths.results_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    rows: list[dict] = []
+
+    print("\n=== pandas baseline ===")
+    t0 = time.perf_counter()
+    df_pd = load_full_dataset(cfg, n_chunks=n_chunks, clean=False)
+    pd_load_t = time.perf_counter() - t0
+
+    t0 = time.perf_counter()
+    df_pd = build_features(df_pd, cfg.features)
+    pd_features_t = time.perf_counter() - t0
+
+    pd_total = pd_load_t + pd_features_t
+    pd_rows = len(df_pd)
+    print(f"  pandas: load {pd_load_t:.2f}s + features {pd_features_t:.2f}s = {pd_total:.2f}s ({pd_rows:,} rows)")
+    rows.append({
+        "engine": "pandas",
+        "n_chunks": n_chunks,
+        "rows_processed": pd_rows,
+        "load_seconds": round(pd_load_t, 3),
+        "feature_seconds": round(pd_features_t, 3),
+        "total_seconds": round(pd_total, 3),
+        "rows_per_sec": int(pd_rows / pd_total) if pd_total > 0 else 0,
+    })
+    del df_pd
+
+    print("\n=== PySpark ===")
+    if not SPARK_AVAILABLE:
+        print("  PySpark not installed — skipping. (pip install pyspark)")
+    else:
+        spark = get_spark_session(app_name="MetrikAI-Benchmark")
+        try:
+            t0 = time.perf_counter()
+            sdf = load_train_spark(spark, cfg.paths.data_dir)
+            spark_load_t = time.perf_counter() - t0
+
+            t0 = time.perf_counter()
+            sdf = add_time_features_spark(sdf)
+            sdf = add_lag_features_spark(sdf, lag_hours=list(cfg.features.lag_hours))
+            sdf = add_rolling_features_spark(sdf, windows=list(cfg.features.rolling_windows))
+            spark_rows = sdf.count()
+            spark_features_t = time.perf_counter() - t0
+
+            spark_total = spark_load_t + spark_features_t
+            print(f"  spark:  load {spark_load_t:.2f}s + features {spark_features_t:.2f}s = {spark_total:.2f}s ({spark_rows:,} rows)")
+            rows.append({
+                "engine": "pyspark_local",
+                "n_chunks": n_chunks,
+                "rows_processed": spark_rows,
+                "load_seconds": round(spark_load_t, 3),
+                "feature_seconds": round(spark_features_t, 3),
+                "total_seconds": round(spark_total, 3),
+                "rows_per_sec": int(spark_rows / spark_total) if spark_total > 0 else 0,
+            })
+        finally:
+            spark.stop()
+
+    out_path = output_dir / "spark_benchmark.csv"
+    pd.DataFrame(rows).to_csv(out_path, index=False)
+    print(f"\nSaved: {out_path}")
+    print(pd.DataFrame(rows).to_string(index=False))
+
+
 @cli.command()
 @click.option("--n-chunks", type=int, default=2)
 @click.pass_context

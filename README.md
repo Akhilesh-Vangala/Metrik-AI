@@ -7,13 +7,13 @@ Building energy consumption forecasting on the [ASHRAE Great Energy Predictor II
 
 ## Results
 
-- LightGBM RMSE: **183.9**
+- LightGBM RMSE: **182.0**
   - 63% lower than the meter-mean baseline (497.4) — exceeds the proposal's 20–40% target
-  - 23% lower than the lag-24h persistence baseline (238.8)
+  - 24% lower than the lag-24h persistence baseline (238.8)
 - XGBoost RMSE: 184.9
-- 68,504 anomalies flagged in the validation set
+- 66,815 anomalies flagged in the validation set
 - 964 buildings in the audit list
-- Runs in ~90 seconds end to end
+- Runs in ~90 seconds end to end on a Colab T4 (~136 s on a 2024 MacBook)
 
 ## Setup
 
@@ -39,9 +39,10 @@ Or just download the three files manually from the competition page.
 ```bash
 python -m src.cli run                  # full pipeline
 python -m src.cli eda                  # EDA plots
-python -m src.cli benchmark            # Python / NumPy / Numba / Cython speedups
+python -m src.cli benchmark            # Python / NumPy / Numba / Cython / GPU speedups
 python -m src.cli compare              # LightGBM vs XGBoost
 python -m src.cli parallel-benchmark   # parallel training speedup
+python -m src.cli spark-benchmark      # PySpark vs pandas (requires Java)
 python -m src.cli profile              # cProfile report
 pytest tests/ -v                       # run tests
 ```
@@ -58,8 +59,9 @@ We committed all pre-run results to `results/` so you can see the outputs withou
 | `model_comparison.json` | LightGBM vs XGBoost side by side |
 | `audit_list.csv` | 964 buildings ranked by anomaly severity |
 | `anomaly_summary.csv` | per-meter anomaly rates and streak lengths |
-| `benchmarks.csv` | speedup table across implementations |
+| `benchmarks.csv` | speedup table across implementations (incl. CuPy GPU on T4) |
 | `parallel_benchmark.csv` | parallel training time by worker count |
+| `spark_benchmark.csv` | PySpark vs pandas runtime on the same load + feature pipeline |
 | `plots/` | all figures |
 | `model.lgb` | trained LightGBM model |
 
@@ -76,7 +78,7 @@ The raw 20.2M rows drop to ~7.2M after outlier removal and lag NaN drops (the 16
 
 ## Implementation
 
-Feature engineering (38 features): time cyclicals, 24h/168h lags, rolling stats, weather interactions, building metadata. Train/val split is time-based — last 3 months held out, no leakage.
+Feature engineering (38 features): time cyclicals, 24h/168h lags, rolling stats, weather interactions, building metadata. Train/val split is time-based — last 3 months held out, no leakage. The `is_holiday` flag uses per-site country calendars (US/UK/CA/IE) based on the BDG2 site mapping, so European and Canadian sites aren't getting July 4 spuriously flagged as a holiday.
 
 For the optimization techniques required by the course we have: chunked CSV loading with `ThreadPoolExecutor` + `itertools.islice`, Numba `@njit(parallel=True)` kernels, Cython compiled kernels with typed memoryviews, CuPy GPU ops (falls back to CPU if no CUDA), PySpark distributed pipeline (falls back if Spark not installed), `ProcessPoolExecutor` for parallel per-site training (1.62x at 8 workers), and `scipy.optimize.minimize_scalar` for LR search.
 

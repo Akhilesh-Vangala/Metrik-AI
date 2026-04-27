@@ -43,3 +43,7 @@ venv/
 latex/
 Proposal Files/
 project pdfs/
+
+.jdk/
+.venv-spark/
+clone_test*/
