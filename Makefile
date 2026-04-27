@@ -1,6 +1,6 @@
 .PHONY: all setup data cython test run run-dev benchmark parallel-benchmark compare profile spark quality eda clean
 
-PYTHON = python
+PYTHON = python3
 CONFIG = config/config.yaml
 
 all: run eda benchmark compare parallel-benchmark profile test

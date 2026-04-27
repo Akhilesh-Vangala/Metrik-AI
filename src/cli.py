@@ -18,7 +18,7 @@ from src.features import build_features, build_features_naive, get_feature_colum
 from src.model import (
     time_based_split, train_baseline_mean, train_baseline_lag, train_lightgbm,
     train_xgboost, train_site_model, compute_residuals, save_model, save_results,
-    save_predictions, optimize_learning_rate, XGB_AVAILABLE,
+    save_predictions, XGB_AVAILABLE,
 )
 from src.anomaly import detect_anomalies, aggregate_anomalies, summarize_anomalies_by_site
 from src.decision import build_audit_list, export_audit_list

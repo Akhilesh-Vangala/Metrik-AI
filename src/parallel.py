@@ -4,6 +4,7 @@ import itertools
 import logging
 import multiprocessing
 import operator
+import platform
 import time
 from collections import defaultdict
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
@@ -16,7 +17,6 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
-import platform
 _MP_CONTEXT = multiprocessing.get_context("fork" if platform.system() != "Windows" else "spawn")
 
 
