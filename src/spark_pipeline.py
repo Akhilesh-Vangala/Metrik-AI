@@ -32,7 +32,7 @@ def get_spark_session(app_name: str = "MetrikAI", local: bool = True) -> SparkSe
     return builder.getOrCreate()
 
 
-def load_train_spark(spark: SparkSession, data_dir: str) -> SparkDF:
+def load_train_spark(spark: SparkSession, data_dir: str, row_limit: int | None = None) -> SparkDF:
     t0 = time.perf_counter()
 
     train = spark.read.csv(
@@ -41,6 +41,8 @@ def load_train_spark(spark: SparkSession, data_dir: str) -> SparkDF:
         inferSchema=True,
     )
     train = train.withColumn("timestamp", F.to_timestamp("timestamp"))
+    if row_limit is not None and row_limit > 0:
+        train = train.limit(row_limit)
 
     meta = spark.read.csv(
         str(Path(data_dir) / "building_metadata.csv"),

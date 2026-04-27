@@ -352,13 +352,14 @@ def spark(ctx):
 
 
 @cli.command("spark-benchmark")
-@click.option("--n-chunks", type=int, default=2, help="Chunks of train.csv to use (each chunk = config.pipeline.chunk_size rows)")
+@click.option("--n-chunks", type=int, default=0, help="Chunks of train.csv to use (each chunk = config.pipeline.chunk_size rows). 0 = full dataset.")
 @click.pass_context
 def spark_benchmark(ctx, n_chunks: int):
     """Benchmark PySpark vs pandas on the same load + time/lag/rolling feature pipeline.
 
     Writes results/spark_benchmark.csv with one row per engine.
     """
+    chunks = None if n_chunks == 0 else n_chunks
     from src.spark_pipeline import (
         SPARK_AVAILABLE, get_spark_session, load_train_spark,
         add_time_features_spark, add_lag_features_spark, add_rolling_features_spark,
@@ -372,7 +373,7 @@ def spark_benchmark(ctx, n_chunks: int):
 
     print("\n=== pandas baseline ===")
     t0 = time.perf_counter()
-    df_pd = load_full_dataset(cfg, n_chunks=n_chunks, clean=False)
+    df_pd = load_full_dataset(cfg, n_chunks=chunks, clean=False)
     pd_load_t = time.perf_counter() - t0
 
     t0 = time.perf_counter()
@@ -384,7 +385,7 @@ def spark_benchmark(ctx, n_chunks: int):
     print(f"  pandas: load {pd_load_t:.2f}s + features {pd_features_t:.2f}s = {pd_total:.2f}s ({pd_rows:,} rows)")
     rows.append({
         "engine": "pandas",
-        "n_chunks": n_chunks,
+        "n_chunks": n_chunks if n_chunks > 0 else "full",
         "rows_processed": pd_rows,
         "load_seconds": round(pd_load_t, 3),
         "feature_seconds": round(pd_features_t, 3),
@@ -399,8 +400,9 @@ def spark_benchmark(ctx, n_chunks: int):
     else:
         spark = get_spark_session(app_name="MetrikAI-Benchmark")
         try:
+            row_limit = chunks * cfg.pipeline.chunk_size if chunks else None
             t0 = time.perf_counter()
-            sdf = load_train_spark(spark, cfg.paths.data_dir)
+            sdf = load_train_spark(spark, cfg.paths.data_dir, row_limit=row_limit)
             spark_load_t = time.perf_counter() - t0
 
             t0 = time.perf_counter()
@@ -414,7 +416,7 @@ def spark_benchmark(ctx, n_chunks: int):
             print(f"  spark:  load {spark_load_t:.2f}s + features {spark_features_t:.2f}s = {spark_total:.2f}s ({spark_rows:,} rows)")
             rows.append({
                 "engine": "pyspark_local",
-                "n_chunks": n_chunks,
+                "n_chunks": n_chunks if n_chunks > 0 else "full",
                 "rows_processed": spark_rows,
                 "load_seconds": round(spark_load_t, 3),
                 "feature_seconds": round(spark_features_t, 3),

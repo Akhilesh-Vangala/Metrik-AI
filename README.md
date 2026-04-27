@@ -82,6 +82,8 @@ Feature engineering (38 features): time cyclicals, 24h/168h lags, rolling stats,
 
 For the optimization techniques required by the course we have: chunked CSV loading with `ThreadPoolExecutor` + `itertools.islice`, Numba `@njit(parallel=True)` kernels, Cython compiled kernels with typed memoryviews, CuPy GPU ops (falls back to CPU if no CUDA), PySpark distributed pipeline (falls back if Spark not installed), `ProcessPoolExecutor` for parallel per-site training (1.62x at 8 workers), and `scipy.optimize.minimize_scalar` for LR search.
 
+Measured speedups across implementations on the same modified-z-score kernel (T4 GPU, 1M residuals, vs naive Python loop): NumPy 47×, Numba 8×, Cython 58×, CuPy GPU **135×**. For the full feature pipeline on the 20.2M-row dataset, PySpark `local[*]` is **2.5× faster** end-to-end than pandas (9.1s vs 22.9s) and **8.4× faster** on the lag/rolling/window stage alone.
+
 ## References
 
 - Miller et al. (2020). The Building Data Genome Project 2. *Scientific Data.*

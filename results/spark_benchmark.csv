@@ -1,0 +1,3 @@
+engine,n_chunks,rows_processed,load_seconds,feature_seconds,total_seconds,rows_per_sec
+pandas,full,20216100,4.897,18.003,22.9,882809
+pyspark_local,full,20219424,6.92,2.142,9.062,2231287
