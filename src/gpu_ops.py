@@ -9,7 +9,10 @@ logger = logging.getLogger(__name__)
 
 try:
     import cupy as cp
-    GPU_AVAILABLE = True
+    try:
+        GPU_AVAILABLE = cp.cuda.runtime.getDeviceCount() > 0
+    except Exception:
+        GPU_AVAILABLE = False
 except ImportError:
     GPU_AVAILABLE = False
 

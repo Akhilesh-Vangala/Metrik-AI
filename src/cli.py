@@ -200,9 +200,12 @@ def benchmark(ctx, n_chunks: int):
     try:
         from src.gpu_ops import modified_zscore_gpu, GPU_AVAILABLE
         if GPU_AVAILABLE:
-            for size in [100_000, 500_000, 1_000_000]:
-                data = np.random.randn(size).astype(np.float64)
-                suite.time_function("anomaly_scoring", "cupy_gpu", modified_zscore_gpu, data, input_size=size)
+            try:
+                for size in [100_000, 500_000, 1_000_000]:
+                    data = np.random.randn(size).astype(np.float64)
+                    suite.time_function("anomaly_scoring", "cupy_gpu", modified_zscore_gpu, data, input_size=size)
+            except Exception as exc:
+                print(f"  (GPU benchmark aborted at runtime: {type(exc).__name__}: {exc})")
         else:
             print("  (GPU not available — CuPy benchmarks skipped)")
     except ImportError:
