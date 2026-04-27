@@ -140,7 +140,6 @@ def aggregate_anomalies(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def summarize_anomalies_by_site(df: pd.DataFrame) -> dict[int, dict]:
-    """Per-site anomaly summary using defaultdict, operator, and accumulate."""
     site_counts: defaultdict[int, list[float]] = defaultdict(list)
 
     for row in df.loc[df["is_anomaly"] == 1].itertuples(index=False):

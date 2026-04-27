@@ -290,7 +290,6 @@ def optimize_learning_rate(
     cfg: AppConfig,
     lr_bounds: tuple[float, float] = (0.005, 0.3),
 ) -> float:
-    """Find optimal LightGBM learning rate via scipy.optimize.minimize_scalar."""
     target = cfg.pipeline.target_col
     feat_cols = get_feature_columns(train)
     cat_cols = [c for c in ["primary_use_code", "site_id", "meter"] if c in feat_cols]

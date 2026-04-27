@@ -80,7 +80,6 @@ def rolling_mean_gpu(values: np.ndarray, window: int) -> np.ndarray:
 
 
 def _define_cuda_kernel():
-    """Define Numba CUDA kernel for anomaly scoring (Lecture 06 @cuda.jit pattern)."""
     @numba_cuda.jit
     def _zscore_kernel(residuals, median_val, inv_mad_scaled, out):
         pos = numba_cuda.grid(1)
@@ -93,7 +92,6 @@ _cuda_zscore_kernel = None
 
 
 def modified_zscore_cuda_kernel(residuals: np.ndarray) -> np.ndarray:
-    """Anomaly scoring via Numba CUDA kernel with explicit thread/block grid."""
     global _cuda_zscore_kernel
     if not NUMBA_CUDA_AVAILABLE:
         raise RuntimeError("Numba CUDA not available (no NVIDIA GPU detected)")
