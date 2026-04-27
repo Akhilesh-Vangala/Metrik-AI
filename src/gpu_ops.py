@@ -129,6 +129,17 @@ def modified_zscore_cuda_kernel(residuals: np.ndarray) -> np.ndarray:
     return result
 
 
+def warmup() -> None:
+    """Pay the CUDA context + CuPy kernel init cost up front so timed runs
+    measure steady-state throughput, not first-call initialization."""
+    if not GPU_AVAILABLE:
+        return
+    try:
+        _ = modified_zscore_gpu(np.random.randn(1024).astype(np.float64))
+    except Exception:
+        pass
+
+
 def check_gpu_status() -> dict:
     info = {"gpu_available": GPU_AVAILABLE}
 

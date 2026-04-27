@@ -198,9 +198,10 @@ def benchmark(ctx, n_chunks: int):
         print("  (Cython not compiled — run: python setup.py build_ext --inplace)")
 
     try:
-        from src.gpu_ops import modified_zscore_gpu, GPU_AVAILABLE
+        from src.gpu_ops import modified_zscore_gpu, GPU_AVAILABLE, warmup as gpu_warmup
         if GPU_AVAILABLE:
             try:
+                gpu_warmup()
                 for size in [100_000, 500_000, 1_000_000]:
                     data = np.random.randn(size).astype(np.float64)
                     suite.time_function("anomaly_scoring", "cupy_gpu", modified_zscore_gpu, data, input_size=size)
