@@ -170,6 +170,7 @@ def threaded_io_tasks(
     task_items: list[tuple[Any, Callable, tuple]],
     n_workers: int = 4,
 ) -> dict[Any, Any]:
+
     collector = ThreadedResultCollector(n_workers=n_workers)
     collector.start()
     for task_id, fn, args in task_items:

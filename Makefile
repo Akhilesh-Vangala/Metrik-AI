@@ -1,4 +1,4 @@
-.PHONY: all setup data cython test run run-dev benchmark parallel-benchmark compare profile spark quality eda clean
+.PHONY: all setup data cython test run run-dev benchmark parallel-benchmark spark-benchmark compare profile spark quality eda clean
 
 PYTHON = python3
 CONFIG = config/config.yaml
@@ -38,6 +38,9 @@ profile:
 
 spark:
 	$(PYTHON) -m src.cli --config $(CONFIG) spark
+
+spark-benchmark:
+	$(PYTHON) -m src.cli --config $(CONFIG) spark-benchmark
 
 quality:
 	$(PYTHON) -m src.cli --config $(CONFIG) quality

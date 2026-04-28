@@ -47,3 +47,4 @@ project pdfs/
 .jdk/
 .venv-spark/
 clone_test*/
+report-latex/

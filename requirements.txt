@@ -14,3 +14,4 @@ pyspark>=3.5
 click>=8.1
 pytest>=7.4
 matplotlib>=3.7
+# cupy-cuda12x  # GPU only — install manually if CUDA 12 is available
