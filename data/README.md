@@ -2,8 +2,6 @@
 
 This directory holds the ASHRAE Great Energy Predictor III dataset.
 
-**Files are NOT committed to the repo** (too large for git). Download them before running the pipeline.
-
 The pipeline only needs three files:
 
 | File | Size | Description |
