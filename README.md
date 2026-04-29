@@ -44,7 +44,6 @@ python -m src.cli compare              # LightGBM vs XGBoost
 python -m src.cli parallel-benchmark   # parallel training speedup
 python -m src.cli spark-benchmark      # PySpark vs pandas (requires Java)
 python -m src.cli profile              # cProfile report
-pytest tests/ -v                       # run tests
 ```
 
 For a faster dev run: `python -m src.cli run --n-chunks 6`
@@ -80,7 +79,7 @@ The raw 20.2M rows drop to ~7.2M after outlier removal and lag NaN drops (the 16
 
 Feature engineering (38 features): time cyclicals, 24h/168h lags, rolling stats, weather interactions, building metadata. Train/val split is time-based — last 3 months held out, no leakage. The `is_holiday` flag uses per-site country calendars (US/UK/CA/IE) based on the BDG2 site mapping, so European and Canadian sites aren't getting July 4 spuriously flagged as a holiday.
 
-For the optimization techniques required by the course we have: chunked CSV loading with `ThreadPoolExecutor` + `itertools.islice`, Numba `@njit(parallel=True)` kernels, Cython compiled kernels with typed memoryviews, CuPy GPU ops (falls back to CPU if no CUDA), PySpark distributed pipeline (falls back if Spark not installed), `ProcessPoolExecutor` for parallel per-site training (1.62x at 8 workers), and `scipy.optimize.minimize_scalar` for LR search.
+Seven optimization tools are applied across the pipeline: chunked CSV loading with `ThreadPoolExecutor` + `itertools.islice`, Numba `@njit(parallel=True)` kernels, Cython compiled kernels with typed memoryviews, CuPy GPU ops (falls back to CPU if no CUDA), PySpark distributed pipeline (falls back if Spark not installed), `ProcessPoolExecutor` for parallel per-site training (1.62x at 8 workers), and `scipy.optimize.minimize_scalar` for LR search.
 
 Measured speedups across implementations on the same modified-z-score kernel (T4 GPU, 1M residuals, vs naive Python loop): NumPy 47×, Numba 7.5×, Cython 58×, CuPy GPU **134×**. For the full feature pipeline on the 20.2M-row dataset, PySpark `local[*]` is **2.5× faster** end-to-end than pandas (9.1s vs 22.9s) and **8.4× faster** on the lag/rolling/window stage alone.
 
