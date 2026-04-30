@@ -17,22 +17,35 @@ Building energy consumption forecasting on the [ASHRAE Great Energy Predictor II
 
 ## Setup
 
+Requires **Python 3.10 or later**.
+
 ```bash
+python3 -m venv .venv
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 python setup.py build_ext --inplace
 ```
 
 The Cython build step compiles `src/cython_kernels.pyx` — needed for the benchmark command.
 
-You'll need three files from the [ASHRAE competition](https://www.kaggle.com/competitions/ashrae-energy-prediction/data): `train.csv`, `building_metadata.csv`, and `weather_train.csv`, placed under `data/`. Kaggle CLI works:
+### Data
+
+You need three files: `train.csv`, `building_metadata.csv`, and `weather_train.csv`. Place them directly into the `data/` folder (it already exists in the repo):
+
+```
+data/
+  train.csv
+  building_metadata.csv
+  weather_train.csv
+```
+
+The data comes from the [ASHRAE Great Energy Predictor III](https://www.kaggle.com/competitions/ashrae-energy-prediction/data) Kaggle competition. Note: the competition is closed so Kaggle access requires a **late submission** — if you have trouble accessing it there, use the files provided directly. Kaggle CLI works if you have access:
 
 ```bash
 pip install kaggle
 # put your kaggle.json at ~/.kaggle/kaggle.json first
 python3 scripts/download_data.py
 ```
-
-Or just download the three files manually from the competition page.
 
 ## Running
 
