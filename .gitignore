@@ -48,3 +48,4 @@ project pdfs/
 .venv-spark/
 clone_test*/
 report-latex/
+.claude/
