@@ -12,7 +12,9 @@ The other Kaggle files (`test.csv`, `weather_test.csv`, `sample_submission.csv`)
 
 ## Download
 
-Accept the competition rules at kaggle.com/competitions/ashrae-energy-prediction/rules, then either:
+> **Note for graders:** Kaggle requires account verification to access competition data. On the data page you will see a **"Late Submission"** button — click it and accept the competition rules to unlock the download links. You only need to do this once.
+
+After accepting, either:
 
 **Kaggle CLI:** Set up `~/.kaggle/kaggle.json` and run `python3 scripts/download_data.py`
 
