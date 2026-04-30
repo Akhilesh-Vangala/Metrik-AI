@@ -13,7 +13,6 @@ Building energy consumption forecasting on the [ASHRAE Great Energy Predictor II
 - XGBoost RMSE: 184.9
 - 66,815 anomalies flagged in the validation set
 - 964 buildings in the audit list
-- Runs in ~90 seconds end to end on a Colab T4 (~136 s on a 2024 MacBook)
 
 ## Setup
 
