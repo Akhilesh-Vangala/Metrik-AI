@@ -1,14 +1,11 @@
 # Metrik AI
 
-DS-GA 1019 — Advanced Python for Data Science, NYU Spring 2026  
-Akhilesh Vangala (sv3129) · Lucas Yao (ly2808)
-
-Building energy consumption forecasting on the [ASHRAE Great Energy Predictor III](https://www.kaggle.com/competitions/ashrae-energy-prediction) dataset. We trained a LightGBM model to forecast hourly meter readings across 1,449 buildings and built an anomaly detection system to flag unusual consumption patterns.
+Building energy consumption forecasting on the [ASHRAE Great Energy Predictor III](https://www.kaggle.com/competitions/ashrae-energy-prediction) dataset. LightGBM forecasts hourly meter readings across 1,449 buildings, with an anomaly detection layer that flags unusual consumption patterns.
 
 ## Results
 
 - LightGBM RMSE: **182.0**
-  - 63% lower than the meter-mean baseline (497.4) — exceeds the proposal's 20–40% target
+  - 63% lower than the meter-mean baseline (497.4) — ahead of a 20–40% improvement target
   - 24% lower than the lag-24h persistence baseline (238.8)
 - XGBoost RMSE: 184.9
 - 66,815 anomalies flagged in the validation set
